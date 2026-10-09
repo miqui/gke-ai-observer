@@ -1,7 +1,8 @@
 # ClickHouse — Querying OpenLIT's Data
 
-OpenLIT stores its traces, metrics, logs and settings in ClickHouse (`openlit-db`, 24.4.1, in the
-`openlit` namespace), in the `openlit` database. ClickHouse can't be reached from outside the
+OpenLIT stores its traces, metrics and logs in ClickHouse (`openlit-db`, 24.4.1, in the `openlit`
+namespace), in the `openlit` database. The UI stores users, settings and API keys in SQLite on a
+5Gi PVC. ClickHouse can't be reached from outside the
 namespace, so open it with a port-forward or a `kubectl exec`. Backups and restores are covered
 in [README.md](README.md#openlit).
 
