@@ -1,10 +1,10 @@
 # Images must come from an allowlisted repository - exact repository, not just registry, so a
 # lookalike Docker Hub org or a typo'd path is rejected. The tag/digest is ignored here (pinning
-# is disallow-latest-tag's job). References are normalized first: `postgres:16-alpine` is
-# `docker.io/library/postgres`, `prom/prometheus:v2` is `docker.io/prom/prometheus`.
+# is disallow-latest-tag's job). References are normalized first: `busybox:1.37` is
+# `docker.io/library/busybox`, `curlimages/curl:8` is `docker.io/curlimages/curl`.
 #
 # Adding a new image to any covered namespace means adding its repository below. One list serves
-# both the enforce (`default`) and audit (`observability`, `headlamp`, `polaris`) copies of this policy.
+# both the enforce (`default`) and audit (`headlamp`, `polaris`) copies of this policy.
 apiVersion: policies.kyverno.io/v1
 kind: ValidatingPolicy
 metadata:
@@ -30,19 +30,9 @@ spec:
     - name: allowed
       expression: >-
         [
-          'us-central1-docker.pkg.dev/k8s-dev-412419/springboot-grpc-o2/grpc-message-api',
-          'docker.io/library/postgres',
           'docker.io/library/busybox',
           'docker.io/library/nginx',
           'docker.io/curlimages/curl',
-          'docker.io/hazelcast/hazelcast',
-          'quay.io/prometheuscommunity/postgres-exporter',
-          'docker.io/grafana/grafana',
-          'docker.io/prom/prometheus',
-          'docker.io/prom/node-exporter',
-          'docker.io/otel/opentelemetry-collector-contrib',
-          'registry.k8s.io/kube-state-metrics/kube-state-metrics',
-          'o2cr.ai/openobserve/openobserve',
           'ghcr.io/headlamp-k8s/headlamp',
           'us-docker.pkg.dev/fairwinds-ops/oss/polaris'
         ]

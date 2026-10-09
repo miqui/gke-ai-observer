@@ -4,10 +4,7 @@
 #
 # Two sources: this repo (only as a `$values` ref, so k8s/trivy-operator/trivy-operator-values.yaml
 # lives in git next to the other chart values) and the chart itself.
-#
-# Metrics: the chart's `trivy-operator` Service is scraped by the Prometheus in k8s/observability/
-# (job "trivy-operator" in config/prometheus.yml) and drawn by the "Trivy Security" Grafana
-# dashboard. No ServiceMonitor - this cluster's Prometheus isn't the Operator flavour.
+
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -18,7 +15,7 @@ metadata:
 spec:
   project: default
   sources:
-    - repoURL: https://github.com/miqui/gke-springboot-grpc-o2.git
+    - repoURL: https://github.com/miqui/gke-ai-observer.git
       targetRevision: main
       ref: values
     - repoURL: https://aquasecurity.github.io/helm-charts/

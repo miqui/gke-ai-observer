@@ -67,27 +67,9 @@ config:
     # "key", "token", "secret", ...). Checked on the live cluster (2026-09-27), these hold no
     # secret values - header names, feature flags, empty defaults and the *names* of Secrets - so
     # they're exempt from that one rule only.
-    - namespace: observability
-      controllerNames: [openobserve]
-      rules: [sensitiveConfigmapContent]
     - namespace: trivy-system
       controllerNames: [trivy-operator-config]
       rules: [sensitiveConfigmapContent]
     - namespace: crossplane-system
       controllerNames: [crossplane]
       rules: [sensitiveContainerEnvVar]
-    # Same exceptions as Kyverno's (k8s/policies/exceptions/): these DaemonSets read the node by
-    # design, so host access and running as root are expected - every other check still applies.
-    - namespace: observability
-      controllerNames: [node-exporter]
-      rules:
-        - hostNetworkSet
-        - hostPIDSet
-        - hostPathSet
-        - hostPortSet
-        - runAsRootAllowed
-    - namespace: observability
-      controllerNames: [log-collector]
-      rules:
-        - hostPathSet
-        - runAsRootAllowed

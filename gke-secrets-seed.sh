@@ -8,7 +8,7 @@
 # Secrets live outside the cluster, so they survive gke-teardown.sh / gke-deploy.sh cycles.
 #
 # Usage:
-#   op run --env-file=.env -- env PROJECT_ID=k8s-dev-412419 ./gke-secrets-seed.sh
+#   op run --env-file=.env -- env PROJECT_ID=dev-ai-1 ./gke-secrets-seed.sh
 #
 # Idempotent: a new secret version is only added when the value actually changed.
 set -euo pipefail
@@ -18,17 +18,18 @@ PROJECT_ID="${PROJECT_ID:?PROJECT_ID is required}"
 ESO_SA="external-secrets@${PROJECT_ID}.iam.gserviceaccount.com"
 
 # <Secret Manager secret id>=<environment variable (resolved by `op run` from .env)>
+# Keep in sync with REQUIRED_SECRETS in gke-bootstrap.sh and with .env.example.
 SECRETS=(
-  "postgres-app-password=DB_PASSWORD"
-  "grafana-admin-user=GF_SECURITY_ADMIN_USER"
-  "grafana-admin-password=GF_SECURITY_ADMIN_PASSWORD"
-  "openobserve-root-email=ZO_ROOT_USER_EMAIL"
-  "openobserve-root-password=ZO_ROOT_USER_PASSWORD"
 )
 
 log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 
 command -v gcloud >/dev/null 2>&1 || { echo "gcloud CLI not found" >&2; exit 1; }
+
+if [[ ${#SECRETS[@]} -eq 0 ]]; then
+  echo "No secrets defined yet - nothing to seed."
+  exit 0
+fi
 
 missing=0
 for pair in "${SECRETS[@]}"; do

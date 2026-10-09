@@ -1,6 +1,6 @@
-# Crossplane core (the package manager + composition engine). The GCP provider, functions,
-# credentials config and the PostgresInstance API are in k8s/platform/ (next wave), because
-# they need the CRDs this chart installs.
+# Crossplane core (the package manager + composition engine). The GCP provider family, functions
+# and credentials config are in k8s/platform/ (next wave), because they need the CRDs this chart
+# installs.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -11,7 +11,7 @@ metadata:
 spec:
   project: default
   sources:
-    - repoURL: https://github.com/miqui/gke-springboot-grpc-o2.git
+    - repoURL: https://github.com/miqui/gke-ai-observer.git
       targetRevision: main
       ref: values
     - repoURL: https://charts.crossplane.io/stable

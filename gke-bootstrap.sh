@@ -6,14 +6,13 @@
 #   1. installs Argo CD with Helm (the one thing Argo can't install itself), then
 #   2. applies the root Application (k8s/argocd/root-application.yaml), which syncs every other
 #      Application from k8s/argocd/apps/ - Argo CD itself, External Secrets, Crossplane, Kyverno,
-#      the policies, observability, OpenObserve, Headlamp, Trivy, Image Updater and the app, in
-#      sync-wave order - and
-#   3. waits for all of it to be Synced + Healthy, then checks the public endpoint.
+#      the policies, Headlamp, Polaris and Trivy, in sync-wave order - and
+#   3. waits for all of it to be Synced + Healthy.
 # No secret passes through this script: in-cluster credentials come from GCP Secret Manager via
 # External Secrets (seeded by gke-secrets-seed.sh).
 #
 # Usage:
-#   PROJECT_ID=k8s-dev-412419 ./gke-bootstrap.sh
+#   PROJECT_ID=dev-ai-1 ./gke-bootstrap.sh
 #
 # Prerequisites: gke-deploy.sh has run; gke-secrets-seed.sh has run at least once; this repo is
 # pushed to GITHUB_REPO's main branch and is public (Argo CD reads it anonymously).
@@ -21,17 +20,17 @@ set -euo pipefail
 trap 'echo "ERROR: failed at line $LINENO (exit $?)" >&2' ERR
 cd "$(dirname "$0")"
 
-PROJECT_ID="${PROJECT_ID:?PROJECT_ID is required, e.g. PROJECT_ID=k8s-dev-412419 ./gke-bootstrap.sh}"
+PROJECT_ID="${PROJECT_ID:?PROJECT_ID is required, e.g. PROJECT_ID=dev-ai-1 ./gke-bootstrap.sh}"
+export CLOUDSDK_CORE_PROJECT="$PROJECT_ID"
 ZONE="${ZONE:-us-central1-a}"
 CLUSTER="${CLUSTER:-dev-cluster}"
-GITHUB_REPO="${GITHUB_REPO:-miqui/gke-springboot-grpc-o2}"
-API_HOST="${API_HOST:-grpc.miqui.dev}"
+GITHUB_REPO="${GITHUB_REPO:-miqui/gke-ai-observer}"
 # Must match k8s/argocd/apps/argocd.yaml, which takes over this release after bootstrap.
 ARGOCD_CHART_VERSION="10.9.2"
 SYNC_TIMEOUT_MIN="${SYNC_TIMEOUT_MIN:-40}"
 
-REQUIRED_SECRETS=(postgres-app-password grafana-admin-user grafana-admin-password
-                  openobserve-root-email openobserve-root-password)
+# Keep in sync with SECRETS in gke-secrets-seed.sh.
+REQUIRED_SECRETS=()
 
 log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 
@@ -52,15 +51,15 @@ kubectl get --raw /readyz >/dev/null || {
 }
 echo "    cluster: $EXPECTED_CONTEXT"
 
-# The manifests in k8s/ hard-code the project (Workload Identity annotations, registry path,
-# Crossplane config); refuse to bootstrap a cluster in a different one.
+# The manifests in k8s/ hard-code the project (Workload Identity annotations, Crossplane and
+# Secret Manager config); refuse to bootstrap a cluster in a different one.
 if ! grep -q "$PROJECT_ID" k8s/platform/crossplane-provider-config.yaml; then
-  echo "ERROR: k8s/ manifests are not for project $PROJECT_ID (grep for k8s-dev-412419 to retarget)" >&2
+  echo "ERROR: k8s/ manifests are not for project $PROJECT_ID (grep for dev-ai-1 to retarget)" >&2
   exit 1
 fi
 
 missing=""
-for s in "${REQUIRED_SECRETS[@]}"; do
+for s in ${REQUIRED_SECRETS[@]+"${REQUIRED_SECRETS[@]}"}; do
   gcloud secrets describe "$s" --project="$PROJECT_ID" &>/dev/null || missing="$missing $s"
 done
 if [[ -n "$missing" ]]; then
@@ -97,7 +96,6 @@ log "Applying root Application (app of apps: k8s/argocd/apps/)"
 kubectl apply -f k8s/argocd/root-application.yaml
 
 # ---- 3. Wait for everything -----------------------------------------------------------
-# Cloud SQL provisioning dominates: ~10-15 min after the springboot-grpc-o2 wave starts.
 log "Waiting for all Applications to be Synced + Healthy (timeout ${SYNC_TIMEOUT_MIN}m)"
 deadline=$(( $(date +%s) + SYNC_TIMEOUT_MIN * 60 ))
 while :; do
@@ -116,43 +114,17 @@ while :; do
   if [[ $(date +%s) -ge $deadline ]]; then
     echo "ERROR: timed out. Current state:" >&2
     echo "$status" >&2
-    echo "Inspect: kubectl get applications -n argocd; kubectl get postgresinstance,managed -A" >&2
+    echo "Inspect: kubectl get applications -n argocd; kubectl get managed -A" >&2
     exit 1
   fi
   sleep 30
 done
 echo "$status" | sed 's/^/    /'
 
-# ---- 4. Public endpoint ---------------------------------------------------------------------
-# grpc.health.v1.Health/Check with plain curl (no grpcurl needed): an empty request is a 5-byte
-# gRPC frame of zeros, and grpc-status: 0 arrives in the HTTP/2 trailers, which -D prints.
-grpc_health_ok() {
-  printf '\0\0\0\0\0' | curl -sS --http2 --max-time 10 -o /dev/null -D - -X POST \
-    -H 'content-type: application/grpc' -H 'te: trailers' --data-binary @- \
-    "https://${API_HOST}/grpc.health.v1.Health/Check" 2>/dev/null | grep -qi '^grpc-status: 0'
-}
-
-log "Checking gRPC health at ${API_HOST}:443"
-kubectl wait gateway/grpc -n default --for=condition=Programmed --timeout=15m >/dev/null
-ok=0
-for _ in $(seq 1 30); do
-  if grpc_health_ok; then ok=1; break; fi
-  sleep 20
-done
-if [[ "$ok" == 1 ]]; then
-  echo "    ${API_HOST}:443 is serving"
-else
-  echo "    WARNING: not answering yet. A fresh load balancer can take ~10 min; also check the"
-  echo "    Cloudflare A record and cert state:"
-  echo "      gcloud certificate-manager certificates describe grpc-cert --format='value(managed.state)'"
-fi
-
 cat <<EOF
 
 $(printf '\033[1;32mDone.\033[0m') Platform is synced from github.com/${GITHUB_REPO} (main).
 
-  Public API:   ${API_HOST}:443 (gRPC over TLS; reflection on)
-                grpcurl ${API_HOST}:443 list
   Tools (port-forward only):  ./gke-port-forward.sh
     Argo CD admin password:
       kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo

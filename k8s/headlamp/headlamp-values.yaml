@@ -1,5 +1,5 @@
 # Values for the `headlamp/headlamp` chart 0.45.0 (https://headlamp.dev/ - general-purpose
-# Kubernetes web UI, not tied to the message-service metrics stack), rendered by
+# Kubernetes web UI), rendered by
 # k8s/argocd/apps/headlamp.yaml.
 #
 # Highest-risk tool in the cluster (it can browse everything, and with enough RBAC exec into pods
@@ -18,13 +18,8 @@ clusterRoleBinding:
   clusterRoleName: view
 
 config:
-  # The chart bundles the official Prometheus plugin (headlamp-k8s/plugins/prometheus, "Show
-  # Prometheus metrics" charts on workload detail pages) inside its image; this just keeps it
-  # served (chart default, spelled out here for visibility). The plugin auto-detects Prometheus
-  # in-cluster via the `headlamp-prometheus=true` label on k8s/observability/prometheus-service.yaml
-  # - no separate Prometheus install or per-plugin config needed. It does need permission to read
-  # through the API server's service proxy, which the read-only `view` role lacks: that one grant
-  # (GET services/proxy on the prometheus Service only) is k8s/observability/headlamp-prometheus-rbac.yaml.
+  # The chart's bundled plugins (chart default, spelled out here for visibility). Its Prometheus
+  # plugin finds nothing to show: this cluster runs no Prometheus.
   staticPlugins:
     enabled: true
 

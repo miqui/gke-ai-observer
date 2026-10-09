@@ -1,17 +1,16 @@
-# Crossplane packages. Only the Cloud SQL provider is installed (not the whole GCP family - each
-# sub-provider is a separate pod with its own CRDs, and this repo only needs sql.gcp); Crossplane
-# pulls in its provider-family-gcp dependency automatically. Pinned to exact versions so a sync
-# never upgrades anything by surprise.
+# Crossplane packages. Only the GCP provider family is installed: it owns the ProviderConfig CRDs
+# (so crossplane-provider-config.yaml has a kind to apply) but manages no GCP resources itself.
+# Each sub-provider (provider-gcp-storage, ...) is a separate pod with its own CRDs; add one here,
+# at the same version as the family, with `runtimeConfigRef: {name: provider-gcp}` when the
+# platform first needs it. Pinned to exact versions so a sync never upgrades anything by surprise.
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
-  name: provider-gcp-sql
+  name: provider-family-gcp
   annotations:
     argocd.argoproj.io/sync-wave: "0"
 spec:
-  package: xpkg.crossplane.io/crossplane-contrib/provider-gcp-sql:v3.0.0
-  runtimeConfigRef:
-    name: provider-gcp
+  package: xpkg.crossplane.io/crossplane-contrib/provider-family-gcp:v3.0.0
 ---
 apiVersion: pkg.crossplane.io/v1
 kind: Function

@@ -7,16 +7,13 @@
 #
 # Usage:
 #   ./gke-port-forward.sh                 # all tools
-#   ./gke-port-forward.sh grafana argocd  # just these
+#   ./gke-port-forward.sh argocd headlamp # just these
 # Ctrl-C stops every tunnel. Tunnels that drop (pod restart, idle timeout) are re-opened.
 set -euo pipefail
 
 # name | namespace | service | local port | service port | URL scheme
 TOOLS=(
   "argocd|argocd|argocd-server|8081|443|https"
-  "grafana|observability|grafana|3000|3000|http"
-  "prometheus|observability|prometheus|9090|9090|http"
-  "openobserve|observability|openobserve|5080|5080|http"
   "headlamp|headlamp|headlamp|4466|80|http"
   "polaris|polaris|polaris-dashboard|8082|80|http"
 )
@@ -69,9 +66,6 @@ cat <<'EOF'
 Logins:
   argocd       admin / kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d
                (self-signed cert - accept it in the browser)
-  grafana      kubectl -n observability get secret grafana-credentials -o jsonpath='{.data.GF_SECURITY_ADMIN_PASSWORD}' | base64 -d
-  openobserve  kubectl -n observability get secret openobserve-root-credentials -o jsonpath='{.data.ZO_ROOT_USER_EMAIL}' | base64 -d
-               gcloud secrets versions access latest --secret=openobserve-root-password   (password)
   headlamp     kubectl create token headlamp -n headlamp --duration=1h      (read-only)
   polaris      none - read-only report, reachable only through this tunnel
 

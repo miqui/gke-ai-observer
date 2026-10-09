@@ -10,7 +10,7 @@ Needs `kubectl`, and `jq` for the report queries. Policy objects are cluster-sco
 (`ValidatingPolicy`); exceptions live in the `kyverno` namespace.
 
 Names to know: each rule exists as `<rule>-enforce` (Deny, `default` namespace) and `<rule>-audit`
-(Audit, `observability`/`headlamp`); `disallow-latest-tag` and `restrict-cluster-admin-bindings`
+(Audit, `headlamp`/`polaris`); `disallow-latest-tag` and `restrict-cluster-admin-bindings`
 are audit-only and have no suffix.
 
 ## Is it working? (start here)
@@ -67,12 +67,12 @@ kubectl get policyreport,clusterpolicyreport -A -o json \
   | jq -r '.items[] | . as $r | .results[]? | select(.result=="fail") | "\(.policy)\t\($r.metadata.namespace // "-")\t\($r.scope.kind)/\($r.scope.name)"' | sort -u | column -t
 
 # The message behind one resource's failure
-kubectl get policyreport -n observability -o json \
-  | jq -r '.items[] | select(.scope.name=="grafana" and .scope.kind=="Deployment") | .results[] | select(.result=="fail") | "\(.policy): \(.message)"'
+kubectl get policyreport -n headlamp -o json \
+  | jq -r '.items[] | select(.scope.name=="headlamp" and .scope.kind=="Deployment") | .results[] | select(.result=="fail") | "\(.policy): \(.message)"'
 
 # Everything Kyverno says about one resource, any result (skip = matched a PolicyException)
-kubectl get policyreport -n observability -o json \
-  | jq -r '.items[] | select(.scope.name=="node-exporter" and .scope.kind=="DaemonSet") | .results[] | "\(.result)\t\(.policy)"' | sort | column -t
+kubectl get policyreport -n polaris -o json \
+  | jq -r '.items[] | select(.scope.name=="polaris-dashboard" and .scope.kind=="Deployment") | .results[] | "\(.result)\t\(.policy)"' | sort | column -t
 
 # Only reports that have failures (FAIL is column 6 with -A)
 kubectl get policyreport -A --no-headers | awk '$6>0 {print $1,$3,$4,"fail="$6}'
