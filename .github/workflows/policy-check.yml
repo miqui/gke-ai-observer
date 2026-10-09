@@ -1,10 +1,10 @@
 name: Kyverno policy check
 
-# Runs the same policies the cluster enforces (k8s/policies/) against the manifests in k8s/, before
-# merge, via check-policies.sh - see that script for what is blocking (the enforce set) versus
-# only reported (the audit set). Then a report-only Polaris audit (polaris-audit.sh) with the
-# in-cluster dashboard's config. Unlike the two service workflows this one also runs on pull
-# requests: catching a non-compliant manifest at review time is the point.
+# Runs the same policies the cluster enforces (k8s/policies/) against this repo's workload
+# manifests, before merge, via check-policies.sh - see that script for what is blocking (the
+# enforce set) versus only reported (the audit set), plus a self-test against a known-bad
+# fixture. Then a report-only Polaris audit (polaris-audit.sh) with the in-cluster dashboard's
+# config. Runs on pull requests: catching a non-compliant manifest at review time is the point.
 on:
   pull_request:
     paths:
@@ -71,5 +71,5 @@ jobs:
           polaris version
 
       # Report only (score + failed checks in the job summary); never fails the build.
-      - name: Polaris audit of k8s/ (report only)
+      - name: Polaris audit of workload manifests (report only)
         run: ./polaris-audit.sh

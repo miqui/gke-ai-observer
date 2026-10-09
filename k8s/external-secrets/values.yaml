@@ -11,7 +11,7 @@ serviceAccount:
   # credentials of its own, so the controller uses this ambient identity.
   name: external-secrets
   annotations:
-    iam.gke.io/gcp-service-account: external-secrets@k8s-dev-412419.iam.gserviceaccount.com
+    iam.gke.io/gcp-service-account: external-secrets@dev-ai-1.iam.gserviceaccount.com
 
 resources:
   requests:

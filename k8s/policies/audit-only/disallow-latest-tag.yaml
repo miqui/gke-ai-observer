@@ -1,8 +1,5 @@
-# Audit-only on purpose. k8s/kustomization.yaml ships `newTag: latest` as the fallback, and Argo
-# CD Image Updater only swaps in a timestamped tag *after* the first sync - so denying :latest
-# would block the very first rollout. Audit still surfaces it in PolicyReports (and in CI, where
-# it is reported as a warning). Once the first sync no longer depends on :latest this can move
-# to the enforce set.
+# Audit-only: surfaces unpinned images in PolicyReports (and in CI, where it is reported as a
+# warning) without blocking third-party charts that default to :latest.
 apiVersion: policies.kyverno.io/v1
 kind: ValidatingPolicy
 metadata:
@@ -20,7 +17,7 @@ spec:
       matchExpressions:
         - key: kubernetes.io/metadata.name
           operator: In
-          values: ["default", "observability", "headlamp"]
+          values: ["default", "headlamp", "polaris"]
     resourceRules:
       - apiGroups: [""]
         apiVersions: ["v1"]

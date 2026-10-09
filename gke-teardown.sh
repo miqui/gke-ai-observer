@@ -1,25 +1,22 @@
 #!/usr/bin/env bash
 #
 # gke-teardown.sh — delete what gke-deploy.sh/gke-bootstrap.sh created, in dependency order:
-#   1. In-cluster: stop Argo CD reconciling, then delete the Gateway (-> Google load balancer)
-#      and the PostgresInstance (-> Crossplane deletes the Cloud SQL instance) and wait for both
-#      to be gone - deleting the cluster first would orphan them, still billing
+#   1. In-cluster: stop Argo CD reconciling (so it doesn't recreate anything mid-teardown)
 #   2. GKE cluster
-#   3. Leftovers: any Cloud SQL instance this platform labelled, the load balancer's forwarding
-#      rule on grpc-ip, network endpoint groups in the VPC, and the PVCs' persistent disks (a
-#      cluster deletion leaves both behind)
-#   4. Private Service Access peering + range, static IP, SSL policy, Cloudflare A record
-#   5. Firewall rules in the VPC, Cloud NAT, Cloud Router, subnet, VPC
+#   3. Leftovers a cluster deletion leaves behind: network endpoint groups in the VPC and the
+#      PVCs' persistent disks
+#   4. Firewall rules in the VPC, Cloud NAT, Cloud Router, subnet, VPC
 #
-# Kept by default (free or pennies, and slow/awkward to recreate) - removed with --purge:
-#   Artifact Registry repo + images, Certificate Manager cert/map/DNS authorization (+ its
-#   Cloudflare CNAME), Secret Manager secrets, service accounts, GitHub Workload Identity pool.
+# Kept by default (free or pennies) - removed with --purge: Secret Manager secrets, service
+# accounts.
+#
+# Every gcloud call is pinned to PROJECT_ID through CLOUDSDK_CORE_PROJECT; nothing outside that
+# project is touched and your gcloud configuration's default project is left alone.
 #
 # Usage:
-#   PROJECT_ID=k8s-dev-412419 ./gke-teardown.sh
-#   PROJECT_ID=k8s-dev-412419 ./gke-teardown.sh --yes            # skip confirmation
-#   PROJECT_ID=k8s-dev-412419 ./gke-teardown.sh --purge          # also the persistent resources
-#   op run --env-file=.env -- env PROJECT_ID=... ./gke-teardown.sh   # + Cloudflare DNS cleanup
+#   PROJECT_ID=dev-ai-1 ./gke-teardown.sh
+#   PROJECT_ID=dev-ai-1 ./gke-teardown.sh --yes            # skip confirmation
+#   PROJECT_ID=dev-ai-1 ./gke-teardown.sh --purge          # also the persistent resources
 #
 # Overridable env vars match gke-deploy.sh.
 set -euo pipefail
@@ -27,7 +24,8 @@ trap 'echo "ERROR: failed at line $LINENO (exit $?)" >&2' ERR
 cd "$(dirname "$0")"
 
 # ---- Config ---------------------------------------------------------------
-PROJECT_ID="${PROJECT_ID:?PROJECT_ID is required, e.g. PROJECT_ID=k8s-dev-412419 ./gke-teardown.sh}"
+PROJECT_ID="${PROJECT_ID:?PROJECT_ID is required, e.g. PROJECT_ID=dev-ai-1 ./gke-teardown.sh}"
+export CLOUDSDK_CORE_PROJECT="$PROJECT_ID"
 REGION="${REGION:-us-central1}"
 ZONE="${ZONE:-us-central1-a}"
 CLUSTER="${CLUSTER:-dev-cluster}"
@@ -35,26 +33,10 @@ VPC="${VPC:-dev-vpc}"
 SUBNET="${SUBNET:-dev-subnet}"
 ROUTER="${ROUTER:-dev-router}"
 NAT="${NAT:-dev-nat}"
-REPO="${REPO:-springboot-grpc-o2}"
-DOMAIN="${DOMAIN:-miqui.dev}"
-API_HOST="${API_HOST:-grpc.${DOMAIN}}"
-
-PSA_RANGE_NAME="cloudsql-psa-range"
-IP_NAME="grpc-ip"
-SSL_POLICY="grpc-tls"
-DNS_AUTH="grpc-dns-auth"
-CERT="grpc-cert"
-CERT_MAP="grpc-cert-map"
-CERT_MAP_ENTRY="grpc-cert-map-entry"
-SERVICE_ACCOUNTS=(gke-dev-nodes crossplane-gcp external-secrets argocd-image-updater ci-springboot-grpc-o2)
+SERVICE_ACCOUNTS=(gke-dev-nodes crossplane-gcp external-secrets)
 PROJECT_ROLES=(
   "gke-dev-nodes=roles/container.defaultNodeServiceAccount"
-  "crossplane-gcp=roles/cloudsql.admin"
-  "crossplane-gcp=roles/compute.networkUser"
 )
-SECRETS=(postgres-app-password grafana-admin-user grafana-admin-password
-         openobserve-root-email openobserve-root-password)
-WIF_POOL="github"
 
 ASSUME_YES=0
 PURGE=0
@@ -68,13 +50,6 @@ done
 
 log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 skip() { echo "    not found, skipping"; }
-wait_until() { # wait_until <timeout seconds> <description> <command...>: poll until command succeeds
-  local deadline=$(( $(date +%s) + $1 )) what="$2"; shift 2
-  until "$@"; do
-    if [[ $(date +%s) -ge $deadline ]]; then echo "    WARNING: timed out waiting for $what" >&2; return 1; fi
-    sleep 15
-  done
-}
 
 command -v gcloud >/dev/null 2>&1 || { echo "gcloud CLI not found" >&2; exit 1; }
 
@@ -82,20 +57,14 @@ command -v gcloud >/dev/null 2>&1 || { echo "gcloud CLI not found" >&2; exit 1; 
 cat <<EOF
 About to DELETE the following resources in project '$PROJECT_ID':
 
-  Cloud SQL            : the platform's instance(s) - ALL DATA IS LOST (no backups are kept)
-  Load balancer        : Gateway for $API_HOST, static IP $IP_NAME, SSL policy $SSL_POLICY
   GKE cluster          : $CLUSTER (zone $ZONE)
-  Persistent disks     : the PVCs' disks (OpenObserve, Trivy) - their data is lost
-  Network              : NEGs, PSA peering/range, firewall rules, $NAT / $ROUTER, $SUBNET / $VPC
-  DNS                  : A record $API_HOST (if CLOUDFLARE_API_TOKEN is set)
+  Persistent disks     : the PVCs' disks (Trivy, ...) - their data is lost
+  Network              : NEGs, firewall rules, $NAT / $ROUTER, $SUBNET / $VPC
 EOF
 if [[ "$PURGE" -eq 1 ]]; then
-  cat <<EOF
-  --purge              : Artifact Registry $REPO (ALL IMAGES), certificate $CERT + map + DNS
-                         authorization, Secret Manager secrets, service accounts
-EOF
+  echo "  --purge              : Secret Manager secrets (label managed-by=gke-secrets-seed), service accounts"
 else
-  echo "  Kept (use --purge) : Artifact Registry, certificate, secrets, service accounts, WIF pool"
+  echo "  Kept (use --purge) : Secret Manager secrets, service accounts"
 fi
 echo
 if [[ "$ASSUME_YES" -ne 1 ]]; then
@@ -103,37 +72,15 @@ if [[ "$ASSUME_YES" -ne 1 ]]; then
   [[ "$CONFIRM" == "delete" ]] || { echo "Aborted."; exit 0; }
 fi
 
-gcloud config set project "$PROJECT_ID"
-API_IP=$(gcloud compute addresses describe "$IP_NAME" --global --format='value(address)' 2>/dev/null || true)
-
 # ---- 1. In-cluster cleanup ----------------------------------------------------
 if gcloud container clusters describe "$CLUSTER" --zone="$ZONE" &>/dev/null; then
   gcloud container clusters get-credentials "$CLUSTER" --zone="$ZONE" >/dev/null 2>&1 || true
   if command -v kubectl >/dev/null 2>&1 && kubectl get --raw /readyz >/dev/null 2>&1; then
     log "Stopping Argo CD reconciliation (so it doesn't recreate what's deleted next)"
     kubectl scale statefulset argocd-application-controller -n argocd --replicas=0 2>/dev/null || skip
-
-    log "Deleting the Gateway (Google load balancer for $API_HOST)"
-    kubectl delete gateway grpc -n default --ignore-not-found --wait=true --timeout=5m || true
-    if [[ -n "$API_IP" ]]; then
-      wait_until 900 "the load balancer's forwarding rules to be removed" \
-        bash -c "[[ -z \"\$(gcloud compute forwarding-rules list --global --filter='IPAddress=$API_IP' --format='value(name)')\" ]]" \
-        || true
-    fi
-
-    log "Deleting PostgresInstances (Crossplane deletes the Cloud SQL instance; ~5 min)"
-    if kubectl get crd postgresinstances.platform.miqui.dev >/dev/null 2>&1; then
-      kubectl delete postgresinstances --all -A --wait=false || true
-      wait_until 1200 "Cloud SQL managed resources to be deleted" \
-        bash -c '[[ -z "$(kubectl get databaseinstances.sql.gcp.m.upbound.io -A --no-headers 2>/dev/null)" ]]' \
-        || true
-    else
-      skip
-    fi
   else
     echo "WARNING: cluster exists but its API is unreachable (IP changed?); skipping in-cluster" >&2
-    echo "         cleanup - the leftover checks after cluster deletion will catch Cloud SQL and" >&2
-    echo "         the forwarding rule, but other load balancer parts may need manual cleanup." >&2
+    echo "         cleanup - the leftover checks after cluster deletion still run." >&2
   fi
 fi
 
@@ -156,29 +103,7 @@ else
   skip
 fi
 
-# ---- 3. Leftovers the in-cluster cleanup should have removed -----------------------
-log "Checking for leftover Cloud SQL instances (label platform=gke-springboot-grpc-o2)"
-LEFTOVER_SQL=$(gcloud sql instances list --filter="settings.userLabels.platform=gke-springboot-grpc-o2" \
-  --format='value(name)' 2>/dev/null || true)
-if [[ -n "$LEFTOVER_SQL" ]]; then
-  for inst in $LEFTOVER_SQL; do
-    echo "    deleting $inst"
-    gcloud sql instances delete "$inst" --quiet
-  done
-else
-  echo "    none"
-fi
-
-if [[ -n "$API_IP" ]]; then
-  log "Checking for leftover forwarding rules on $IP_NAME ($API_IP)"
-  LEFTOVER_FR=$(gcloud compute forwarding-rules list --global --filter="IPAddress=$API_IP" --format='value(name)' || true)
-  if [[ -n "$LEFTOVER_FR" ]]; then
-    for fr in $LEFTOVER_FR; do gcloud compute forwarding-rules delete "$fr" --global --quiet; done
-  else
-    echo "    none"
-  fi
-fi
-
+# ---- 3. Leftovers a cluster deletion leaves behind ------------------------------------
 # Container-native load balancing leaves zonal network endpoint groups (one per Service port)
 # behind when the cluster goes before the NEG controller has cleaned up; any NEG in this VPC
 # blocks deleting it ("is already being used by .../networkEndpointGroups/k8s1-...").
@@ -193,8 +118,8 @@ else
   echo "    none"
 fi
 
-# Deleting a GKE cluster does NOT delete the persistent disks behind its PVCs (OpenObserve's
-# and the Trivy server's here); they'd keep billing. Some GKE versions label them with the
+# Deleting a GKE cluster does NOT delete the persistent disks behind its PVCs (the Trivy
+# server's here); they'd keep billing. Some GKE versions label them with the
 # cluster name; others (1.35.6, 2026-09-27) set no labels and only record the PVC in the
 # disk's description (`"storage.gke.io/created-by":"pd.csi.storage.gke.io"`, name `pvc-...`).
 # Match either, in the cluster's zone; only unattached disks are touched.
@@ -210,43 +135,9 @@ else
   echo "    none"
 fi
 
-# ---- 4. PSA, edge, DNS -------------------------------------------------------------------
-# Deleting the consumer side of the peering works even while the producer side still holds
-# on to a just-deleted Cloud SQL instance (which blocks `gcloud services vpc-peerings delete`).
-log "Removing Private Service Access peering + range"
-if gcloud compute networks describe "$VPC" &>/dev/null && \
-   gcloud compute networks peerings list --network="$VPC" --format='value(peerings.name)' 2>/dev/null | grep -q servicenetworking; then
-  gcloud compute networks peerings delete servicenetworking-googleapis-com --network="$VPC" --quiet
-else
-  skip
-fi
-if gcloud compute addresses describe "$PSA_RANGE_NAME" --global &>/dev/null; then
-  gcloud compute addresses delete "$PSA_RANGE_NAME" --global --quiet
-fi
-
-log "Releasing static IP $IP_NAME and SSL policy $SSL_POLICY"
-if [[ -n "$API_IP" ]]; then gcloud compute addresses delete "$IP_NAME" --global --quiet; else skip; fi
-if gcloud compute ssl-policies describe "$SSL_POLICY" --global &>/dev/null; then
-  gcloud compute ssl-policies delete "$SSL_POLICY" --global --quiet || \
-    echo "    WARNING: $SSL_POLICY still in use by a leftover target proxy; delete it later" >&2
-fi
-
-# A released IP goes back into Google's pool and can be handed to someone else; a DNS record
-# still pointing at it would send $API_HOST traffic to them. Remove it.
-if [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]; then
-  log "Removing Cloudflare A record for $API_HOST"
-  # shellcheck source=scripts/cloudflare-dns.sh
-  source scripts/cloudflare-dns.sh
-  cf_delete "$DOMAIN" A "$API_HOST" || true
-else
-  echo
-  echo "    NOTE: delete the Cloudflare A record for $API_HOST now (or set CLOUDFLARE_API_TOKEN):"
-  echo "          $API_IP is released and may be reassigned to another Google Cloud customer."
-fi
-
-# ---- 5. Network ------------------------------------------------------------------------------
+# ---- 4. Network ------------------------------------------------------------------------------
 # The VPC is dedicated to this platform, so every firewall rule in it is ours: the webhook rule
-# from gke-deploy.sh plus anything GKE (health checks, Gateway) failed to clean up.
+# from gke-deploy.sh plus anything GKE failed to clean up.
 log "Deleting firewall rules in $VPC"
 FW_RULES=$(gcloud compute firewall-rules list --filter="network~/${VPC}\$" --format='value(name)' 2>/dev/null || true)
 if [[ -n "$FW_RULES" ]]; then
@@ -297,28 +188,11 @@ else
   skip
 fi
 
-# ---- 6. --purge: persistent resources -----------------------------------------------------------
+# ---- 5. --purge: persistent resources -----------------------------------------------------------
 if [[ "$PURGE" -eq 1 ]]; then
-  log "Purging Artifact Registry repo: $REPO"
-  if gcloud artifacts repositories describe "$REPO" --location="$REGION" &>/dev/null; then
-    gcloud artifacts repositories delete "$REPO" --location="$REGION" --quiet
-  else
-    skip
-  fi
-
-  log "Purging Certificate Manager resources"
-  ACME_NAME=$(gcloud certificate-manager dns-authorizations describe "$DNS_AUTH" \
-    --format='value(dnsResourceRecord.name)' 2>/dev/null || true)
-  gcloud certificate-manager maps entries delete "$CERT_MAP_ENTRY" --map="$CERT_MAP" --quiet 2>/dev/null || true
-  gcloud certificate-manager maps delete "$CERT_MAP" --quiet 2>/dev/null || true
-  gcloud certificate-manager certificates delete "$CERT" --quiet 2>/dev/null || true
-  gcloud certificate-manager dns-authorizations delete "$DNS_AUTH" --quiet 2>/dev/null || true
-  if [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "$ACME_NAME" ]]; then
-    cf_delete "$DOMAIN" CNAME "${ACME_NAME%.}" || true
-  fi
-
-  log "Purging Secret Manager secrets"
-  for s in "${SECRETS[@]}"; do
+  # Only the secrets gke-secrets-seed.sh created (it labels them), whatever their names.
+  log "Purging Secret Manager secrets (label managed-by=gke-secrets-seed)"
+  for s in $(gcloud secrets list --filter='labels.managed-by=gke-secrets-seed' --format='value(name.basename())' 2>/dev/null || true); do
     gcloud secrets delete "$s" --quiet 2>/dev/null && echo "    $s" || true
   done
 
@@ -332,21 +206,17 @@ if [[ "$PURGE" -eq 1 ]]; then
     gcloud iam service-accounts delete "${sa}@${PROJECT_ID}.iam.gserviceaccount.com" --quiet 2>/dev/null \
       && echo "    $sa" || true
   done
-
-  # The Workload Identity pool "$WIF_POOL" is shared by every project (each has its own binding
-  # and CI service account), so it is never purged here.
 fi
 
 # ---- Summary ----------------------------------------------------------------------
 cat <<EOF
 
-$(printf '\033[1;32mTeardown complete.\033[0m') Billable cluster, database, load balancer and network resources are deleted.
+$(printf '\033[1;32mTeardown complete.\033[0m') Billable cluster, disk and network resources are deleted.
 EOF
 if [[ "$PURGE" -ne 1 ]]; then
   cat <<EOF
 
-  Still present (by design, for the next gke-deploy.sh): Artifact Registry $REPO, certificate
-  $CERT (+ map, DNS authorization and its Cloudflare CNAME), Secret Manager secrets, service
-  accounts. Remove them with --purge (the shared WIF pool is never removed).
+  Still present (by design, for the next gke-deploy.sh): Secret Manager secrets, service
+  accounts. Remove them with --purge.
 EOF
 fi

@@ -7,11 +7,9 @@
 #
 #   -4  argocd (self-managed), external-secrets, crossplane      controllers + CRDs
 #   -3  kyverno, platform                                         policy engine; secret store,
-#                                                                 Crossplane providers/XRD/Composition
+#                                                                 Crossplane GCP provider family
 #   -2  kyverno-policies                                          enforce rules in place before workloads
-#   -1  observability, headlamp, polaris, trivy-operator, argocd-image-updater
-#    0  openobserve                                               needs observability's ExternalSecret
-#    1  springboot-grpc-o2                                                Cloud SQL (XR), app, Gateway
+#   -1  headlamp, polaris, trivy-operator                         tools
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -20,7 +18,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/miqui/gke-springboot-grpc-o2.git
+    repoURL: https://github.com/miqui/gke-ai-observer.git
     targetRevision: main
     path: k8s/argocd/apps
   destination:
@@ -30,14 +28,3 @@ spec:
     automated:
       prune: true
       selfHeal: true
-    syncOptions:
-      - RespectIgnoreDifferences=true
-  # Argo CD Image Updater writes the chosen image tag into the springboot-grpc-o2 Application itself
-  # ("argocd" write-back: no git commits). Without this, the root app's selfHeal would put the
-  # Application back to what's in git and undo every image update.
-  ignoreDifferences:
-    - group: argoproj.io
-      kind: Application
-      name: springboot-grpc-o2
-      jsonPointers:
-        - /spec/source/kustomize

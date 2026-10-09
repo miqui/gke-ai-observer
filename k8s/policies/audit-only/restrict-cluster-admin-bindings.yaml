@@ -1,7 +1,7 @@
 # Flags any ClusterRoleBinding to cluster-admin other than the built-in ones. Cluster-scoped, so
 # no namespace selector; Audit only, because existing bindings can't be "denied" retroactively
-# and the background scan is what reports them. Known/accepted bindings get a PolicyException
-# (see exceptions/).
+# and the background scan is what reports them. Known/accepted bindings would get a
+# PolicyException in the kyverno namespace.
 apiVersion: policies.kyverno.io/v1
 kind: ValidatingPolicy
 metadata:

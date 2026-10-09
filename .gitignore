@@ -8,10 +8,6 @@ kubeconfig.yml
 ### Claude Code ###
 .claude/
 
-### Maven ###
-target/
-.mvn/wrapper/maven-wrapper.jar
-
 ### IntelliJ IDEA ###
 .idea
 *.iws

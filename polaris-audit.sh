@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Runs the Polaris best-practice checks against this repo's own manifests (k8s/ and
-# k8s/observability/), before merge - the same checks and exemptions the in-cluster Polaris
+# Runs the Polaris best-practice checks against this repo's own workload manifests
+# (WORKLOAD_DIRS - none yet, so it only reports that), before merge - the same checks and exemptions the in-cluster Polaris
 # dashboard uses (k8s/polaris/polaris-values.yaml), rendered from the same chart version
 # (k8s/argocd/apps/polaris.yaml). CI: .github/workflows/policy-check.yml.
 #
@@ -16,6 +16,13 @@ cd "$(dirname "$0")"
 for tool in kubectl helm polaris; do
   command -v "$tool" >/dev/null 2>&1 || { echo "Error: $tool is required."; exit 1; }
 done
+
+# Kustomize directories of this repo's own workloads (keep in sync with check-policies.sh).
+WORKLOAD_DIRS=()
+if [ ${#WORKLOAD_DIRS[@]} -eq 0 ]; then
+  echo "No workload manifests (WORKLOAD_DIRS is empty) - nothing to audit."
+  exit 0
+fi
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -33,8 +40,9 @@ chart_version="$(sed -n '/chart: polaris$/{n;s/.*targetRevision: *//p;}' k8s/arg
   | kubectl label --local -f - render=only -o jsonpath='{.data.config\.yaml}' > "$tmp/config.yaml"
 
 mkdir "$tmp/manifests"
-kubectl kustomize k8s > "$tmp/manifests/app.yaml"
-kubectl kustomize k8s/observability > "$tmp/manifests/observability.yaml"
+for d in "${WORKLOAD_DIRS[@]}"; do
+  kubectl kustomize "$d" > "$tmp/manifests/$(tr / - <<<"$d").yaml"
+done
 
 polaris audit --audit-path "$tmp/manifests" --config "$tmp/config.yaml" --merge-config \
   --format pretty --color=false --only-show-failed-tests | tee "$tmp/report.txt"

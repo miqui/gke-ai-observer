@@ -3,14 +3,16 @@
 # policies the cluster enforces, run before merge (CI: .github/workflows/policy-check.yml).
 # Needs `kubectl` (for `kubectl kustomize`) and the `kyverno` CLI; run from anywhere.
 #
-#   1. ENFORCE set vs the `default` namespace manifests (k8s/)        -> must pass, fails the check
-#   2. AUDIT set vs k8s/ and k8s/observability/                       -> reported, never fails
-#   3. self-test: ENFORCE set vs a known-bad fixture                  -> must be rejected
+#   1. ENFORCE set vs this repo's own workload manifests (WORKLOAD_DIRS) -> must pass, fails the check
+#   2. AUDIT set vs the same manifests                                 -> reported, never fails
+#   3. self-test: ENFORCE set vs a known-bad fixture                   -> must be rejected
+#
+# WORKLOAD_DIRS is empty until the repo ships its own workloads (third-party charts are checked
+# in-cluster by the audit policies instead); steps 1 and 2 are skipped until then.
 #
 # The enforce and audit sets are separate runs on purpose: the CLI exits 1 on any failure and
 # `--audit-warn` doesn't distinguish Deny from Audit for the CEL policy types, so a single run
-# can't express "enforce fails, audit warns". PolicyExceptions must also be passed separately
-# (--exception) - in the same file as the policies the CLI silently loads nothing.
+# can't express "enforce fails, audit warns".
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -21,15 +23,15 @@ done
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-kubectl kustomize k8s > "$tmp/app.yaml"
-kubectl kustomize k8s/observability > "$tmp/observability.yaml"
+# Kustomize directories of this repo's own workloads.
+WORKLOAD_DIRS=()
+
 kubectl kustomize k8s/policies/overlays/enforce-default > "$tmp/enforce.yaml"
 {
   kubectl kustomize k8s/policies/overlays/audit-other
   echo "---"
   kubectl kustomize k8s/policies/audit-only
 } > "$tmp/audit.yaml"
-kubectl kustomize k8s/policies/exceptions > "$tmp/exceptions.yaml"
 
 # apply <label> <policies> <resources>: runs the CLI, prints its output, and sets
 #   rc (CLI exit code), rules (policy rules loaded), passed (passing evaluations).
@@ -38,7 +40,7 @@ kubectl kustomize k8s/policies/exceptions > "$tmp/exceptions.yaml"
 apply() {
   local label="$1" out
   echo "=== ${label}"
-  if out="$(kyverno apply "$2" --resource "$3" --exception "$tmp/exceptions.yaml" 2>&1)"; then rc=0; else rc=$?; fi
+  if out="$(kyverno apply "$2" --resource "$3" 2>&1)"; then rc=0; else rc=$?; fi
   echo "$out"
   rules="$(sed -n 's/^Applying \([0-9]*\) policy rule.*/\1/p' <<<"$out" | head -1)"
   passed="$(sed -n 's/^pass: \([0-9]*\),.*/\1/p' <<<"$out" | tail -1)"
@@ -52,21 +54,25 @@ apply() {
 
 failed=0
 
-apply "ENFORCE policies vs k8s/ (default namespace)" "$tmp/enforce.yaml" "$tmp/app.yaml"
-if [ "$rc" -ne 0 ]; then
-  echo "FAIL: k8s/ violates the enforce policies - Kyverno would reject these workloads."
-  failed=1
-elif [ "$passed" -eq 0 ]; then
-  echo "FAIL: no evaluation passed - the enforce policies didn't match any manifest."
-  failed=1
-fi
+if [ ${#WORKLOAD_DIRS[@]} -eq 0 ]; then
+  echo "=== No workload manifests (WORKLOAD_DIRS is empty) - skipping the enforce and audit runs."
+else
+  for d in "${WORKLOAD_DIRS[@]}"; do kubectl kustomize "$d"; echo "---"; done > "$tmp/app.yaml"
 
-{
-  apply "AUDIT policies vs k8s/ (report only)" "$tmp/audit.yaml" "$tmp/app.yaml"
-  apply "AUDIT policies vs k8s/observability/ (report only)" "$tmp/audit.yaml" "$tmp/observability.yaml"
-} | tee "$tmp/audit-report.txt"
-if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-  { echo '### Kyverno audit findings (informational)'; echo '```'; cat "$tmp/audit-report.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+  apply "ENFORCE policies vs ${WORKLOAD_DIRS[*]}" "$tmp/enforce.yaml" "$tmp/app.yaml"
+  if [ "$rc" -ne 0 ]; then
+    echo "FAIL: the workload manifests violate the enforce policies - Kyverno would reject them."
+    failed=1
+  elif [ "$passed" -eq 0 ]; then
+    echo "FAIL: no evaluation passed - the enforce policies didn't match any manifest."
+    failed=1
+  fi
+
+  apply "AUDIT policies vs ${WORKLOAD_DIRS[*]} (report only)" "$tmp/audit.yaml" "$tmp/app.yaml" \
+    | tee "$tmp/audit-report.txt"
+  if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    { echo '### Kyverno audit findings (informational)'; echo '```'; cat "$tmp/audit-report.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+  fi
 fi
 
 echo

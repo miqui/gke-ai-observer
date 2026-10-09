@@ -54,9 +54,8 @@ configs:
       return hs
 
     # Crossplane packages (pkg.crossplane.io), managed resources (*.upbound.io) and this repo's
-    # PostgresInstance XR report
-    # readiness through Ready/Synced conditions, which Argo CD doesn't read by default - without
-    # this they show Healthy while Cloud SQL is still provisioning. Wildcards only work in this
+    # own XRs (platform.miqui.dev) report readiness through Ready/Synced conditions, which Argo CD
+    # doesn't read by default - without this they show Healthy while still provisioning. Wildcards only work in this
     # combined `resource.customizations` key (not the per-kind ones above). Adapted from the
     # Crossplane docs' Argo CD guide.
     resource.customizations: |
