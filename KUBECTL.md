@@ -1,7 +1,8 @@
 # kubectl Commands — Cluster Access and Platform Status
 
 Everyday `kubectl` for the GKE dev cluster. Argo CD specifics are in [ARGOCD.md](ARGOCD.md),
-Kyverno in [KYVERNO.md](KYVERNO.md), Trivy in [TRIVY.md](TRIVY.md).
+Kyverno in [KYVERNO.md](KYVERNO.md), Trivy in [TRIVY.md](TRIVY.md), ClickHouse queries in
+[CLICKHOUSE.md](CLICKHOUSE.md).
 
 ## Cluster access and platform status (GKE)
 
