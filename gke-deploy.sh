@@ -10,7 +10,9 @@
 #   - Cloud Router + Cloud NAT for node/pod egress (all images are public: ghcr.io, Docker Hub, ...)
 #   - Dataplane V2 (NetworkPolicy enforcement), Workload Identity, Shielded Nodes
 #   - Dedicated least-privilege node service account (not the Editor-role default compute SA)
-#   - Workload Identity GSAs for in-cluster controllers: Crossplane, External Secrets
+#   - Workload Identity GSAs for in-cluster controllers: Crossplane, External Secrets, and the
+#     OpenLIT ClickHouse backup job
+#   - A monthly billing budget with e-mail alerts on the project
 #   - No public edge: every UI (Argo CD, OpenLIT, ...) is reached with kubectl port-forward
 #
 # Every gcloud call is pinned to PROJECT_ID through CLOUDSDK_CORE_PROJECT, so this script never
@@ -20,7 +22,7 @@
 #   PROJECT_ID=dev-ai-1 ./gke-deploy.sh
 #
 # Overridable env vars: REGION, ZONE, CLUSTER, VPC, SUBNET, ROUTER, NAT, MACHINE_TYPE,
-#                       MIN_NODES, MAX_NODES, NODE_DISK_SIZE_GB
+#                       MIN_NODES, MAX_NODES, NODE_DISK_SIZE_GB, BUDGET_USD
 set -euo pipefail
 trap 'echo "ERROR: failed at line $LINENO (exit $?)" >&2' ERR
 cd "$(dirname "$0")"
@@ -41,6 +43,8 @@ MAX_NODES="${MAX_NODES:-5}"
 # Node boot disk (GKE default is 100 GB). Holds COS, system pods and all pulled images (no image
 # streaming); 30 GB is ample for this stack. Creation-time only for the default node pool.
 NODE_DISK_SIZE_GB="${NODE_DISK_SIZE_GB:-30}"
+# Monthly budget (USD) for the project. Alerts only: GCP budgets never stop spending.
+BUDGET_USD="${BUDGET_USD:-25}"
 
 SUBNET_RANGE="10.0.0.0/20"
 PODS_RANGE="10.4.0.0/14"
@@ -51,6 +55,7 @@ SERVICES_RANGE="10.8.0.0/20"
 NODE_SA="gke-dev-nodes"
 CROSSPLANE_SA="crossplane-gcp"          # KSA crossplane-system/provider-gcp
 ESO_SA="external-secrets"               # KSA external-secrets/external-secrets
+BACKUP_SA="openlit-backup"              # KSA openlit/openlit-backup (ClickHouse -> GCS CronJob)
 
 log() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 skip() { echo "    already exists, skipping"; }
@@ -130,7 +135,9 @@ gcloud services enable \
   compute.googleapis.com \
   secretmanager.googleapis.com \
   iam.googleapis.com \
-  iamcredentials.googleapis.com
+  iamcredentials.googleapis.com \
+  storage.googleapis.com \
+  billingbudgets.googleapis.com
 
 # ---- 1. Service accounts ----------------------------------------------------
 ensure_sa() { # ensure_sa <id> <display name>
@@ -150,14 +157,49 @@ log "Creating service accounts"
 ensure_sa "$NODE_SA"          "GKE dev-cluster nodes"
 ensure_sa "$CROSSPLANE_SA"    "Crossplane GCP provider"
 ensure_sa "$ESO_SA"           "External Secrets Operator (Secret Manager reader)"
+ensure_sa "$BACKUP_SA"        "OpenLIT ClickHouse backup job (GCS writer)"
 
 log "Granting project roles"
 # Node SA: logging/monitoring/metadata only (the predefined role GKE recommends for custom node
 # SAs). Every image is public, so no registry access is needed.
 project_role "$NODE_SA" roles/container.defaultNodeServiceAccount
-# Crossplane: no roles yet - it manages no GCP resources. Grant the narrowest role per resource
-# type here when a managed resource is added (e.g. a GCS bucket for ClickHouse backups).
-# ESO gets secretAccessor per secret (gke-secrets-seed.sh), not project-wide.
+# Crossplane manages the ClickHouse backup bucket and its IAM bindings (k8s/openlit/manifests/
+# backup-bucket.yaml). storage.admin is the narrowest predefined role that can create buckets and
+# set their IAM policy; bucket creation is checked against the project, so an IAM condition on the
+# bucket name can't narrow it further. It grants no access outside Cloud Storage.
+project_role "$CROSSPLANE_SA" roles/storage.admin
+# ESO gets secretAccessor per secret (gke-secrets-seed.sh), not project-wide. The backup SA gets
+# no project role: Crossplane grants it object create/read on the backup bucket only.
+
+# ---- 1b. Billing budget ------------------------------------------------------
+# Not a Crossplane resource on purpose: a budget belongs to the billing account, not the project,
+# it must exist while no cluster does, and managing it in-cluster would mean granting the
+# crossplane-gcp SA a role on the billing account. Alerts go to the billing account's admins at
+# 50/90/100% of actual spend and 100% of forecast spend. Needs billing.budgets.create on the
+# billing account (Billing Account Administrator or Costs Manager); a failure only warns.
+log "Billing budget: ${BUDGET_USD} USD/month on $PROJECT_ID"
+BUDGET_NAME="${PROJECT_ID}-monthly"
+BILLING_ACCOUNT=$(gcloud billing projects describe "$PROJECT_ID" \
+  --format='value(billingAccountName)' 2>/dev/null | sed 's|^billingAccounts/||')
+if [[ -z "$BILLING_ACCOUNT" ]]; then
+  echo "    WARNING: no billing account linked to $PROJECT_ID (or no permission to see it) - skipped" >&2
+elif gcloud billing budgets list --billing-account="$BILLING_ACCOUNT" --billing-project="$PROJECT_ID" \
+     --format='value(displayName)' 2>/dev/null | grep -qx "$BUDGET_NAME"; then
+  echo "    $BUDGET_NAME: exists (change the amount in the console, or delete it and re-run)"
+elif ! gcloud billing budgets create \
+    --billing-account="$BILLING_ACCOUNT" \
+    --billing-project="$PROJECT_ID" \
+    --display-name="$BUDGET_NAME" \
+    --budget-amount="${BUDGET_USD}USD" \
+    --filter-projects="projects/$PROJECT_ID" \
+    --threshold-rule=percent=0.5 \
+    --threshold-rule=percent=0.9 \
+    --threshold-rule=percent=1.0 \
+    --threshold-rule=percent=1.0,basis=forecasted-spend >/dev/null; then
+  echo "    WARNING: could not create the budget (needs billing.budgets.create on billing account $BILLING_ACCOUNT) - continuing" >&2
+else
+  echo "    $BUDGET_NAME created on billing account $BILLING_ACCOUNT"
+fi
 
 # ---- 2. Dedicated VPC + subnet --------------------------------------------
 log "Creating VPC: $VPC"
@@ -278,6 +320,7 @@ wi_bind() { # wi_bind <gsa id> <namespace> <ksa>
 log "Binding Kubernetes ServiceAccounts to GCP service accounts (Workload Identity)"
 wi_bind "$CROSSPLANE_SA"    crossplane-system provider-gcp
 wi_bind "$ESO_SA"           external-secrets  external-secrets
+wi_bind "$BACKUP_SA"        openlit           openlit-backup
 
 # ---- 7. Connect + verify -----------------------------------------------------
 log "Fetching kubeconfig for $CLUSTER"
@@ -295,7 +338,7 @@ $(printf '\033[1;32mDone.\033[0m') Cluster '$CLUSTER' and its GCP foundation are
   Next:
     1. op run --env-file=.env -- env PROJECT_ID=$PROJECT_ID ./gke-secrets-seed.sh   (first time / rotation)
     2. PROJECT_ID=$PROJECT_ID ./gke-bootstrap.sh
-    3. ./gke-port-forward.sh     (Argo CD, Headlamp, Polaris)
+    3. ./gke-port-forward.sh     (OpenLIT, Argo CD, Headlamp, Polaris)
 
   If your public IP changes, re-authorize it:
     gcloud container clusters update $CLUSTER --project=$PROJECT_ID --zone=$ZONE \\

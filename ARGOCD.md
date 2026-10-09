@@ -18,11 +18,12 @@ Everything is an Application, created by the `root` Application (app of apps) fr
 | `external-secrets` | -4 | External Secrets Operator (chart + `k8s/external-secrets/values.yaml`) |
 | `crossplane` | -4 | Crossplane core (chart + `k8s/crossplane/values.yaml`) |
 | `kyverno` | -3 | Kyverno (chart + `k8s/kyverno/kyverno-values.yaml`) |
-| `platform` | -3 | `k8s/platform/`: ClusterSecretStore, Crossplane GCP provider family/functions/ClusterProviderConfig |
+| `platform` | -3 | `k8s/platform/`: ClusterSecretStore, Crossplane Upbound GCP provider family + provider-gcp-storage, functions, ClusterProviderConfig |
 | `kyverno-policies` | -2 | `k8s/policies/` |
 | `headlamp` | -1 | chart + `k8s/headlamp/headlamp-values.yaml` + `k8s/headlamp/manifests/` |
 | `polaris` | -1 | chart + `k8s/polaris/polaris-values.yaml` + `k8s/polaris/manifests/` |
 | `trivy-operator` | -1 | chart + `k8s/trivy-operator/trivy-operator-values.yaml` - see [TRIVY.md](TRIVY.md) |
+| `openlit` | 0 | chart + `k8s/openlit/values.yaml` + `k8s/openlit/manifests/` (ClickHouse credentials, GCS backup bucket + CronJob, NetworkPolicies, quota) |
 
 All track `main` with `automated: {prune: true, selfHeal: true}` (except `argocd`: no prune). UI:
 `./gke-port-forward.sh argocd` -> `https://localhost:8081`.

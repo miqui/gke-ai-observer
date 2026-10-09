@@ -8,7 +8,8 @@
 #   4. Firewall rules in the VPC, Cloud NAT, Cloud Router, subnet, VPC
 #
 # Kept by default (free or pennies) - removed with --purge: Secret Manager secrets, service
-# accounts.
+# accounts, and the OpenLIT ClickHouse backup bucket (Crossplane creates it but never deletes it,
+# so backups outlive the cluster). The billing budget is always kept.
 #
 # Every gcloud call is pinned to PROJECT_ID through CLOUDSDK_CORE_PROJECT; nothing outside that
 # project is touched and your gcloud configuration's default project is left alone.
@@ -33,10 +34,13 @@ VPC="${VPC:-dev-vpc}"
 SUBNET="${SUBNET:-dev-subnet}"
 ROUTER="${ROUTER:-dev-router}"
 NAT="${NAT:-dev-nat}"
-SERVICE_ACCOUNTS=(gke-dev-nodes crossplane-gcp external-secrets)
+SERVICE_ACCOUNTS=(gke-dev-nodes crossplane-gcp external-secrets openlit-backup)
 PROJECT_ROLES=(
   "gke-dev-nodes=roles/container.defaultNodeServiceAccount"
+  "crossplane-gcp=roles/storage.admin"
 )
+# Must match metadata.name in k8s/openlit/manifests/backup-bucket.yaml.
+BACKUP_BUCKET="${PROJECT_ID}-openlit-backups"
 
 ASSUME_YES=0
 PURGE=0
@@ -58,13 +62,15 @@ cat <<EOF
 About to DELETE the following resources in project '$PROJECT_ID':
 
   GKE cluster          : $CLUSTER (zone $ZONE)
-  Persistent disks     : the PVCs' disks (Trivy, ...) - their data is lost
+  Persistent disks     : the PVCs' disks (OpenLIT, ClickHouse, Trivy, ...) - their data is lost
+                         (ClickHouse backups in gs://$BACKUP_BUCKET are kept)
   Network              : NEGs, firewall rules, $NAT / $ROUTER, $SUBNET / $VPC
 EOF
 if [[ "$PURGE" -eq 1 ]]; then
-  echo "  --purge              : Secret Manager secrets (label managed-by=gke-secrets-seed), service accounts"
+  echo "  --purge              : Secret Manager secrets (label managed-by=gke-secrets-seed), service accounts,"
+  echo "                         gs://$BACKUP_BUCKET and every backup in it"
 else
-  echo "  Kept (use --purge) : Secret Manager secrets, service accounts"
+  echo "  Kept (use --purge) : Secret Manager secrets, service accounts, gs://$BACKUP_BUCKET"
 fi
 echo
 if [[ "$ASSUME_YES" -ne 1 ]]; then
@@ -196,6 +202,13 @@ if [[ "$PURGE" -eq 1 ]]; then
     gcloud secrets delete "$s" --quiet 2>/dev/null && echo "    $s" || true
   done
 
+  log "Purging backup bucket gs://$BACKUP_BUCKET"
+  if gcloud storage buckets describe "gs://$BACKUP_BUCKET" &>/dev/null; then
+    gcloud storage rm --recursive "gs://$BACKUP_BUCKET" --quiet
+  else
+    skip
+  fi
+
   log "Purging service accounts"
   for pair in "${PROJECT_ROLES[@]}"; do
     gcloud projects remove-iam-policy-binding "$PROJECT_ID" \
@@ -217,6 +230,6 @@ if [[ "$PURGE" -ne 1 ]]; then
   cat <<EOF
 
   Still present (by design, for the next gke-deploy.sh): Secret Manager secrets, service
-  accounts. Remove them with --purge.
+  accounts, ClickHouse backups in gs://$BACKUP_BUCKET. Remove them with --purge.
 EOF
 fi

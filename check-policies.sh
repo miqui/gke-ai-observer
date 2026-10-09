@@ -7,8 +7,11 @@
 #   2. AUDIT set vs the same manifests                                 -> reported, never fails
 #   3. self-test: ENFORCE set vs a known-bad fixture                   -> must be rejected
 #
-# WORKLOAD_DIRS is empty until the repo ships its own workloads (third-party charts are checked
-# in-cluster by the audit policies instead); steps 1 and 2 are skipped until then.
+# WORKLOAD_DIRS is empty until the repo ships its own workloads in `default` (third-party charts
+# are checked in-cluster by the audit policies instead); steps 1 and 2 are skipped until then.
+# The one first-party workload today, the openlit-backup CronJob in k8s/openlit/manifests/, runs in
+# the audit-only `openlit` namespace, and the policies' autogen doesn't cover CronJobs; its pod
+# spec passes the enforce set anyway (checked by hand when it was written).
 #
 # The enforce and audit sets are separate runs on purpose: the CLI exits 1 on any failure and
 # `--audit-warn` doesn't distinguish Deny from Audit for the CEL policy types, so a single run

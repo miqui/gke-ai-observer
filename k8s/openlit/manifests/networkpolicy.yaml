@@ -1,0 +1,48 @@
+# Ingress for the `openlit` namespace (Dataplane V2 enforces these; `kubectl port-forward` isn't
+# subject to NetworkPolicy, so the UI stays reachable through gke-port-forward.sh):
+#
+#   - pods inside the namespace may talk to each other: OpenLIT -> ClickHouse, the backup job ->
+#     ClickHouse, openlit-controller -> OpenLIT UI/OTLP
+#   - OTLP (4317 gRPC, 4318 HTTP) on the OpenLIT pod is open to every namespace, so any workload
+#     can send telemetry
+#   - everything else - ClickHouse in particular - is unreachable from outside the namespace
+#
+# Egress isn't restricted: the backup job needs Google APIs and the controller polls OpenLIT.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: openlit
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: openlit
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-otlp-from-cluster
+  namespace: openlit
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openlit
+      app.kubernetes.io/component: openlit
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - {protocol: TCP, port: 4317}
+        - {protocol: TCP, port: 4318}

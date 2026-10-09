@@ -1,14 +1,15 @@
 # gke-ai-observer
 
 An open-source AI observability platform on a dev [GKE](https://cloud.google.com/kubernetes-engine)
-cluster in GCP project **`dev-ai-1`**. [OpenLIT](https://github.com/openlit/openlit) (LLM traces,
-token/cost metrics and evals, on ClickHouse) will be deployed by Argo CD. Crossplane provisions
-any GCP resources the platform needs.
+cluster in GCP project **`dev-ai-1`**. Argo CD deploys [OpenLIT](https://github.com/openlit/openlit)
+(LLM traces, token/cost metrics and evals, on ClickHouse) with its eBPF-based zero-code
+instrumentation controller. Crossplane provisions the GCP resources the platform needs: today,
+the GCS bucket for ClickHouse backups.
 
-> **Status:** the platform layer is in place. OpenLIT itself is the next change and is not
-> installed yet. This repo started as a copy of `miqui/gke-springboot-grpc-o2`. The Java gRPC
-> service, Cloud SQL, Hazelcast, the public Gateway and the Grafana/Prometheus/OpenObserve stack
-> were removed. That repo and its GCP project (`k8s-dev-412419`) are untouched.
+> **Status:** OpenLIT is defined but has not yet been deployed to `dev-ai-1`. No demo LLM app
+> exists yet, so OpenLIT stays empty until something sends it OTLP data. This repo started as a
+> copy of `miqui/gke-springboot-grpc-o2`. That repo and its GCP project (`k8s-dev-412419`) are
+> untouched.
 
 The cluster is meant to be **short-lived**: create it for an experiment, tear it down after a few
 hours, recreate it for the next one. Secrets and service accounts live outside it and are reused.
@@ -21,11 +22,18 @@ Google IAM, and binds on `127.0.0.1` only.
 
 | Component | URL | Login |
 | --- | --- | --- |
+| OpenLIT | `http://localhost:3000` | `user@openlit.io` / `openlituser` (the chart's default). Change it in Settings after each new cluster. |
 | Argo CD | `https://localhost:8081` (self-signed cert) | `admin` / `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' \| base64 -d`. Change it in the UI, then delete that Secret. |
 | Headlamp | `http://localhost:4466` | `kubectl create token headlamp -n headlamp --duration=1h \| tr -d '\n' \| pbcopy` (read-only) |
 | Polaris | `http://localhost:8082` | none (read-only report) |
 
 ## Architecture
+
+![Architecture](docs/architecture.png)
+
+The source is [`docs/architecture.drawio`](docs/architecture.drawio). Open it in draw.io /
+diagrams.net. After editing it, re-export the PNG: `draw.io -x -f png -o docs/architecture.png
+docs/architecture.drawio`.
 
 - **Project isolation**: every script takes `PROJECT_ID` (required, no default) and exports it as
   `CLOUDSDK_CORE_PROJECT`. All `gcloud` calls are therefore pinned to that project, and your
@@ -46,12 +54,22 @@ Google IAM, and binds on `127.0.0.1` only.
     Crossplane) on older peering-based private clusters. Current PSC-based clusters need no rule.
 - **GitOps**: Argo CD syncs the whole platform from this repo's `main` branch; see
   [Continuous Deployment with Argo CD](#continuous-deployment-with-argo-cd).
-- **GCP resources through Crossplane** (`k8s/platform/`): the GCP provider family plus its
-  functions, and a `ClusterProviderConfig` that authenticates as the `crossplane-gcp` service
-  account via Workload Identity. No managed resources exist yet. To add one, put a sub-provider
-  (e.g. `provider-gcp-storage`) in `crossplane-packages.yaml` with
-  `runtimeConfigRef: {name: provider-gcp}`, add an XRD + Composition, and grant `crossplane-gcp`
-  the narrowest matching role in `gke-deploy.sh`.
+- **GCP resources through Crossplane**:
+  - `k8s/platform/` installs the [Upbound GCP provider](https://marketplace.upbound.io/providers/upbound/provider-family-gcp)
+    family plus `provider-gcp-storage` (v3.1.0) and the Composition functions. It also holds a
+    `ClusterProviderConfig` that authenticates as the `crossplane-gcp` service account via
+    Workload Identity (`roles/storage.admin`).
+  - The managed resources live next to the workload that uses them, as namespaced MRs. The one
+    today is `k8s/openlit/manifests/backup-bucket.yaml`: the bucket plus its IAM bindings.
+  - To add another resource type: add its sub-provider to `crossplane-packages.yaml` with
+    `runtimeConfigRef: {name: provider-gcp}`, and grant `crossplane-gcp` the narrowest matching
+    role in `gke-deploy.sh`.
+- **Budget**: `gke-deploy.sh` creates a `BUDGET_USD` (default 25) monthly budget on the project.
+  It alerts the billing admins at 50/90/100% of actual spend and at 100% of forecast spend.
+  - Budgets only alert; they never stop spending.
+  - The budget is created with `gcloud`, not Crossplane. It belongs to the billing account, it
+    has to exist while no cluster does, and managing it from Crossplane would need a
+    billing-account role.
 - **Secrets**: nothing secret is committed, or passed through a script into the cluster.
   - Values live in 1Password. `gke-secrets-seed.sh` copies them into **GCP Secret Manager**.
   - The **External Secrets Operator** builds Kubernetes Secrets from `ExternalSecret` manifests.
@@ -59,8 +77,10 @@ Google IAM, and binds on `127.0.0.1` only.
     exactly the seeded secrets.
   - The `gcp-secret-manager` `ClusterSecretStore` only serves the namespaces listed in its
     `conditions` (`openlit`).
-  - No secrets are defined yet. Each one is an entry in `gke-secrets-seed.sh`, `.env.example` and
-    `REQUIRED_SECRETS` in `gke-bootstrap.sh`.
+  - No secrets need seeding yet. The ClickHouse password is generated inside the cluster by an
+    External Secrets `Password` generator, so it never exists outside the cluster. A seeded
+    secret would be an entry in `gke-secrets-seed.sh`, `.env.example` and `REQUIRED_SECRETS` in
+    `gke-bootstrap.sh`.
 - **Tools**:
   - **[Headlamp](https://headlamp.dev/)** is a Kubernetes web UI, bound to the read-only `view`
     ClusterRole.
@@ -84,6 +104,7 @@ anonymously.
 | -3 | `kyverno`, `platform` | Kyverno chart; `k8s/platform/` (secret store, Crossplane GCP provider family/functions/config) |
 | -2 | `kyverno-policies` | `k8s/policies/`: enforce rules exist before any workload syncs |
 | -1 | `headlamp`, `polaris`, `trivy-operator` | charts + values |
+| 0 | `openlit` | OpenLIT chart + `k8s/openlit/values.yaml` + `k8s/openlit/manifests/` |
 
 A wave only starts once the previous one is Healthy. That depends on the Application health check
 in `k8s/argocd/argocd-values.yaml`, which also teaches Argo CD to read Crossplane's Ready
@@ -102,8 +123,8 @@ checked in CI (`.github/workflows/policy-check.yml` → `check-policies.sh`). Th
   - `require-secure-container-context`
   - `require-resources`
   - `restrict-image-repositories`, an exact-repository allowlist
-- Overlays turn the rules into a **Deny** copy for `default` and an **Audit** copy for `headlamp`
-  and `polaris`. `audit-only/` holds `disallow-latest-tag` and `restrict-cluster-admin-bindings`.
+- Overlays turn the rules into a **Deny** copy for `default` and an **Audit** copy for
+  `headlamp`, `polaris` and `openlit`. `audit-only/` holds `disallow-latest-tag` and `restrict-cluster-admin-bindings`.
 - **A new image** needs its repository in `restrict-image-repositories.yaml`.
 - **A new namespace** goes into the overlays' `namespaceSelector`.
 - `check-policies.sh` evaluates the enforce and audit sets against this repo's own workload
@@ -144,10 +165,11 @@ repo is readable and warns about unpushed commits.
 
 - `gke-deploy.sh` is idempotent; every step skips what already exists. It:
   - checks your IAM permissions and enables the APIs;
-  - creates the service accounts (`gke-dev-nodes`, `crossplane-gcp`, `external-secrets`) and the
-    node SA's role;
+  - creates the service accounts (`gke-dev-nodes`, `crossplane-gcp`, `external-secrets`,
+    `openlit-backup`), the node SA's role and Crossplane's `roles/storage.admin`;
+  - creates the monthly billing budget;
   - creates the VPC, subnet, Cloud Router + NAT, the cluster and the webhook firewall rule;
-  - binds Workload Identity for Crossplane and External Secrets.
+  - binds Workload Identity for Crossplane, External Secrets and the OpenLIT backup job.
 - `gke-secrets-seed.sh` creates or updates the Secret Manager secrets listed in its `SECRETS`
   array, labelled `managed-by=gke-secrets-seed`. It adds a version only when the value changed, and
   grants `external-secrets` access to exactly those secrets.
@@ -159,7 +181,8 @@ repo is readable and warns about unpushed commits.
   - It then removes what a cluster deletion leaves behind: NEGs, and the unattached PD-CSI disks
     behind the PVCs.
   - Finally it removes the firewall rules, NAT, router, subnet and VPC.
-  - Secrets and service accounts are kept unless you pass `--purge`. `--yes` skips the prompt.
+  - Secrets, service accounts and the backup bucket are kept unless you pass `--purge`. The budget
+    is always kept. `--yes` skips the prompt.
 
 **If your public IP changes**, the control plane stops answering (`kubectl` times out).
 Re-authorize your IP with the command `gke-deploy.sh` prints at the end.
@@ -174,6 +197,53 @@ gcloud compute networks list --project=$PROJECT_ID --filter=name=dev-vpc
 
 Operational notes on GKE events that look alarming but aren't are in [GKE-OPS.md](GKE-OPS.md);
 everyday `kubectl` is in [KUBECTL.md](KUBECTL.md).
+
+### OpenLIT
+
+`./gke-port-forward.sh openlit` serves the UI at `http://localhost:3000`. Everything runs in the
+`openlit` namespace:
+
+- **OpenLIT** (`ghcr.io/openlit/openlit:1.24.0`) is the UI plus an embedded OTel collector. Its
+  SQLite store (users, settings, API keys) sits on a 5Gi PVC.
+- **ClickHouse** (`openlit-db`, 24.4.1) holds traces, metrics and logs, on a 10Gi PVC. It can only
+  be reached from inside the namespace.
+- **openlit-controller** provides zero-code instrumentation. One privileged pod per node (hostPID,
+  eBPF, host mounts) finds processes calling LLM APIs, and OpenLIT's *Agents* page can then enable
+  SDK injection for them.
+  - It replaces the openlit-operator, which was removed upstream in April 2026.
+  - Turn it off with `openlit-controller.enabled: false` in `k8s/openlit/values.yaml`.
+  - When it injects the SDK it patches the target Deployment. If Argo CD manages that Deployment,
+    `selfHeal` reverts the patch, so add the instrumentation in git for those.
+  - Pods in `default` must pass the Kyverno enforce rules, injected containers included.
+
+**Send telemetry** from any namespace (OTLP is open cluster-wide; nothing else is):
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://openlit.openlit.svc.cluster.local:4318   # HTTP; gRPC on :4317
+```
+
+**Backups.** The `openlit-backup` CronJob runs daily at 03:00 UTC. It dumps every ClickHouse table
+(its schema plus a zstd-compressed Native data file) and copies the result to
+`gs://dev-ai-1-openlit-backups/openlit/<timestamp>/`.
+- It authenticates as the `openlit-backup` service account through Workload Identity, which can
+  create and read backups but not delete them.
+- A lifecycle rule deletes backups after 14 days.
+- Crossplane never deletes the bucket, so backups outlive the cluster.
+
+```bash
+# back up now
+kubectl -n openlit create job --from=cronjob/openlit-backup openlit-backup-manual
+kubectl -n openlit logs -f job/openlit-backup-manual -c dump
+gcloud storage ls gs://dev-ai-1-openlit-backups/openlit/
+
+# restore one table into a fresh cluster (OpenLIT recreates the schema at startup)
+TS=20261010T030000Z; T=otel_traces
+gcloud storage cp gs://dev-ai-1-openlit-backups/openlit/$TS/$T.native.zst .
+zstd -d $T.native.zst
+kubectl -n openlit exec -i openlit-db-0 -- bash -c \
+  'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" \
+     --query "INSERT INTO openlit.'$T' FORMAT Native"' < $T.native
+```
 
 ### Headlamp
 

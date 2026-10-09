@@ -1,0 +1,34 @@
+# Caps for the `openlit` namespace, sized for: OpenLIT (200m / 512Mi, limit 2Gi), ClickHouse
+# (250m / 1Gi, limit 2Gi), one openlit-controller pod per node (50m / 128Mi, limit 512Mi; up to
+# 5 nodes), the backup job, and headroom for a rolling restart. No limits.cpu cap: the chart sets
+# CPU limits on some containers and not others.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: openlit-quota
+  namespace: openlit
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 5Gi
+    limits.memory: 12Gi
+    requests.storage: 50Gi
+    persistentvolumeclaims: "4"
+    pods: "15"
+---
+# Defaults for containers that set no resources (the chart's busybox wait-for-clickhouse init
+# container), which a limits.memory quota would otherwise reject.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: openlit-defaults
+  namespace: openlit
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 25m
+        memory: 32Mi
+      default:
+        cpu: 100m
+        memory: 64Mi

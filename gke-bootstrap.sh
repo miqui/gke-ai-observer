@@ -6,7 +6,7 @@
 #   1. installs Argo CD with Helm (the one thing Argo can't install itself), then
 #   2. applies the root Application (k8s/argocd/root-application.yaml), which syncs every other
 #      Application from k8s/argocd/apps/ - Argo CD itself, External Secrets, Crossplane, Kyverno,
-#      the policies, Headlamp, Polaris and Trivy, in sync-wave order - and
+#      the policies, Headlamp, Polaris, Trivy and OpenLIT, in sync-wave order - and
 #   3. waits for all of it to be Synced + Healthy.
 # No secret passes through this script: in-cluster credentials come from GCP Secret Manager via
 # External Secrets (seeded by gke-secrets-seed.sh).
@@ -126,6 +126,8 @@ cat <<EOF
 $(printf '\033[1;32mDone.\033[0m') Platform is synced from github.com/${GITHUB_REPO} (main).
 
   Tools (port-forward only):  ./gke-port-forward.sh
+    OpenLIT: http://localhost:3000  user@openlit.io / openlituser (change it in Settings)
+    OTLP endpoint for workloads: http://openlit.openlit.svc.cluster.local:4318
     Argo CD admin password:
       kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
     Headlamp (read-only) token:

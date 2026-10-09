@@ -10,7 +10,7 @@ Needs `kubectl`, and `jq` for the report queries. Policy objects are cluster-sco
 (`ValidatingPolicy`); exceptions live in the `kyverno` namespace.
 
 Names to know: each rule exists as `<rule>-enforce` (Deny, `default` namespace) and `<rule>-audit`
-(Audit, `headlamp`/`polaris`); `disallow-latest-tag` and `restrict-cluster-admin-bindings`
+(Audit, `headlamp`/`polaris`/`openlit`); `disallow-latest-tag` and `restrict-cluster-admin-bindings`
 are audit-only and have no suffix.
 
 ## Is it working? (start here)

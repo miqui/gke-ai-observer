@@ -7,12 +7,13 @@
 #
 # Usage:
 #   ./gke-port-forward.sh                 # all tools
-#   ./gke-port-forward.sh argocd headlamp # just these
+#   ./gke-port-forward.sh openlit argocd  # just these
 # Ctrl-C stops every tunnel. Tunnels that drop (pod restart, idle timeout) are re-opened.
 set -euo pipefail
 
 # name | namespace | service | local port | service port | URL scheme
 TOOLS=(
+  "openlit|openlit|openlit|3000|3000|http"
   "argocd|argocd|argocd-server|8081|443|https"
   "headlamp|headlamp|headlamp|4466|80|http"
   "polaris|polaris|polaris-dashboard|8082|80|http"
@@ -64,6 +65,7 @@ done
 cat <<'EOF'
 
 Logins:
+  openlit      user@openlit.io / openlituser   (the chart's default - change it in Settings)
   argocd       admin / kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d
                (self-signed cert - accept it in the browser)
   headlamp     kubectl create token headlamp -n headlamp --duration=1h      (read-only)

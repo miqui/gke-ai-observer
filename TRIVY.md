@@ -38,7 +38,7 @@ values file, merge, and Argo rolls it out.
   metric for them, so they're kubectl-only (below).
 - **Default low-cardinality metrics.** The per-CVE-ID metric (`metricsVulnIdEnabled`) and the
   `*Info` metrics are off. Use the reports for detail.
-- **Kyverno** policies only cover `default`, `headlamp` and `polaris`, so nothing in
+- **Kyverno** policies only cover `default`, `headlamp`, `polaris` and `openlit`, so nothing in
   `trivy-system` needs an image allowlist entry or exception.
 
 ## Is it working? (start here)

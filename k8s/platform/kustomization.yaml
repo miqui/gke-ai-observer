@@ -2,12 +2,13 @@
 # Crossplane controllers (and their CRDs) exist:
 #
 #   - the ClusterSecretStore every ExternalSecret in the repo reads through (GCP Secret Manager)
-#   - Crossplane's GCP provider family, the functions Compositions run, and the providers'
-#     credentials config (Workload Identity - no key file)
+#   - Crossplane's Upbound GCP provider family + sub-providers, the functions Compositions run,
+#     and the providers' credentials config (Workload Identity - no key file)
 #
-# No GCP managed resources yet: add a sub-provider (e.g. provider-gcp-storage) to
-# crossplane-packages.yaml, an XRD + Composition here, and the matching role for the
-# crossplane-gcp GSA in gke-deploy.sh.
+# The managed resources themselves live next to the workload that uses them (e.g.
+# k8s/openlit/manifests/backup-bucket.yaml), as namespaced MRs. A new GCP resource type needs its
+# sub-provider in crossplane-packages.yaml and the matching role for the crossplane-gcp GSA in
+# gke-deploy.sh.
 #
 # Argo CD sync waves inside this Application: packages first (0), then the objects whose CRDs
 # those packages install (1).
