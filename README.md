@@ -29,6 +29,12 @@ Google IAM, and binds on `127.0.0.1` only.
 
 ## Architecture
 
+![Architecture](docs/architecture.png)
+
+The source is [`docs/architecture.drawio`](docs/architecture.drawio). Open it in draw.io /
+diagrams.net. After editing it, re-export the PNG: `draw.io -x -f png -o docs/architecture.png
+docs/architecture.drawio`.
+
 - **Project isolation**: every script takes `PROJECT_ID` (required, no default) and exports it as
   `CLOUDSDK_CORE_PROJECT`. All `gcloud` calls are therefore pinned to that project, and your
   gcloud configuration's default project is never changed. `gke-bootstrap.sh` refuses to run if
