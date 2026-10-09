@@ -6,8 +6,9 @@ cluster in GCP project **`dev-ai-1`**. Argo CD deploys [OpenLIT](https://github.
 instrumentation controller. Crossplane provisions the GCP resources the platform needs: today,
 the GCS bucket for ClickHouse backups.
 
-> **Status:** OpenLIT is defined but has not yet been deployed to `dev-ai-1`. No demo LLM app
-> exists yet, so OpenLIT stays empty until something sends it OTLP data. This repo started as a
+> **Status:** OpenLIT was deployed and verified on `dev-ai-1` on 2026-10-09: every app was
+> healthy and a backup reached GCS. The cluster was then torn down; recreate it with the steps
+> below. No demo LLM app exists yet, so OpenLIT stays empty until something sends it OTLP data. This repo started as a
 > copy of `miqui/gke-springboot-grpc-o2`. That repo and its GCP project (`k8s-dev-412419`) are
 > untouched.
 
@@ -206,7 +207,8 @@ everyday `kubectl` is in [KUBECTL.md](KUBECTL.md).
 - **OpenLIT** (`ghcr.io/openlit/openlit:1.24.0`) is the UI plus an embedded OTel collector. Its
   SQLite store (users, settings, API keys) sits on a 5Gi PVC.
 - **ClickHouse** (`openlit-db`, 24.4.1) holds traces, metrics and logs, on a 10Gi PVC. It can only
-  be reached from inside the namespace.
+  be reached from inside the namespace. How to connect, and example queries, are in
+  [CLICKHOUSE.md](CLICKHOUSE.md).
 - **openlit-controller** provides zero-code instrumentation. One privileged pod per node (hostPID,
   eBPF, host mounts) finds processes calling LLM APIs, and OpenLIT's *Agents* page can then enable
   SDK injection for them.
