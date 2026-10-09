@@ -1,0 +1,54 @@
+# OpenLIT (LLM / agent observability: OTLP traces + metrics, cost and token dashboards, evals) from
+# its upstream chart with k8s/openlit/values.yaml, plus this repo's manifests for the `openlit`
+# namespace from k8s/openlit/manifests/:
+#
+#   - the ClickHouse credentials (generated in-cluster by External Secrets, never stored in git)
+#   - the GCS backup bucket and its IAM, as Crossplane managed resources
+#   - the daily ClickHouse -> GCS backup CronJob (Workload Identity, no key)
+#   - NetworkPolicies, ResourceQuota, LimitRange
+#
+# The chart also deploys the openlit-controller DaemonSet (zero-code instrumentation through eBPF).
+# Port-forward only (gke-port-forward.sh openlit -> http://localhost:3000); nothing public.
+#
+# Wave 0: after the platform (Crossplane GCP provider, its credentials, External Secrets) and the
+# Kyverno policies exist.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: openlit
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  sources:
+    - repoURL: https://github.com/miqui/gke-ai-observer.git
+      targetRevision: main
+      ref: values
+    - repoURL: https://openlit.github.io/helm/
+      chart: openlit
+      targetRevision: 1.24.0
+      helm:
+        releaseName: openlit
+        valueFiles:
+          - $values/k8s/openlit/values.yaml
+    - repoURL: https://github.com/miqui/gke-ai-observer.git
+      targetRevision: main
+      path: k8s/openlit/manifests
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openlit
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    # The ExternalSecret and the Crossplane managed resources can race their controllers'
+    # webhooks/CRDs right after a fresh bootstrap.
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 3m

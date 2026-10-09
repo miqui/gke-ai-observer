@@ -4,7 +4,7 @@
 # `docker.io/library/busybox`, `curlimages/curl:8` is `docker.io/curlimages/curl`.
 #
 # Adding a new image to any covered namespace means adding its repository below. One list serves
-# both the enforce (`default`) and audit (`headlamp`, `polaris`) copies of this policy.
+# both the enforce (`default`) and audit (`headlamp`, `polaris`, `openlit`) copies of this policy.
 apiVersion: policies.kyverno.io/v1
 kind: ValidatingPolicy
 metadata:
@@ -34,7 +34,11 @@ spec:
           'docker.io/library/nginx',
           'docker.io/curlimages/curl',
           'ghcr.io/headlamp-k8s/headlamp',
-          'us-docker.pkg.dev/fairwinds-ops/oss/polaris'
+          'us-docker.pkg.dev/fairwinds-ops/oss/polaris',
+          'ghcr.io/openlit/openlit',
+          'ghcr.io/openlit/openlit-controller',
+          'docker.io/clickhouse/clickhouse-server',
+          'gcr.io/google.com/cloudsdktool/google-cloud-cli'
         ]
     # Canonical repository of every container. The single-element `[x].map(name, ...)[0]`
     # pattern is just CEL's way of binding a local name. Steps: drop @digest; drop :tag (a colon

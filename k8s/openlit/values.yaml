@@ -1,0 +1,70 @@
+# Values for the `openlit/openlit` chart 1.24.0 (OpenLIT 1.24.0, openlit-controller 0.10.0),
+# rendered by k8s/argocd/apps/openlit.yaml. Release name `openlit`, so the Services are `openlit`
+# (UI :3000, OTLP gRPC :4317 / HTTP :4318) and `openlit-db` (ClickHouse :8123 / :9000).
+#
+# Send telemetry from any namespace to:
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://openlit.openlit.svc.cluster.local:4318
+
+# Port-forward only (the chart defaults to a LoadBalancer, i.e. a public IP).
+service:
+  type: ClusterIP
+
+# OpenLIT UI + its embedded OTel collector (memory_limiter at 1500 MiB, so keep the 2Gi limit).
+resources:
+  requests:
+    cpu: 200m
+    memory: 512Mi
+  limits:
+    memory: 2Gi
+
+# SQLite (users, settings, API keys) on a 5Gi PVC. Not backed up: it's recreated empty with the
+# cluster, along with the default login.
+persistence:
+  enabled: true
+  size: 5Gi
+
+config:
+  # ClickHouse credentials for the app + its collector: the Secret built by
+  # manifests/clickhouse-credentials.yaml.
+  secret:
+    name: openlit-clickhouse
+    usernameKey: username
+    passwordKey: password
+  # No anonymous usage telemetry to openlit.io.
+  usageMetrics: false
+
+clickhouse:
+  enabled: true
+  # The chart's default, matched to the app's schema. Bump only together with the chart.
+  image:
+    tag: "24.4.1"
+  auth:
+    secret:
+      name: openlit-clickhouse
+      usernameKey: username
+      passwordKey: password
+  persistence:
+    size: 10Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      memory: 2Gi
+
+# Zero-code instrumentation: one privileged pod per node (hostPID, eBPF kprobes, /proc and
+# /sys/fs/bpf host mounts). It discovers processes calling LLM APIs and, when enabled for a
+# service on OpenLIT's Agents page, patches that workload to inject the OpenLIT SDK. It replaces
+# the deprecated openlit-operator (webhook-based, removed upstream in April 2026). Set
+# `enabled: false` to remove it; OpenLIT works without it for apps that use the SDK directly.
+openlit-controller:
+  enabled: true
+  config:
+    environment: dev
+    clusterId: dev-cluster
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi

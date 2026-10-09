@@ -1,0 +1,174 @@
+# Daily ClickHouse -> GCS backup of the `openlit` database, without any key file:
+#
+#   1. init container `dump` (the ClickHouse image, for clickhouse-client): for every table, its
+#      CREATE statement (<table>.sql) and its rows in ClickHouse's Native format, zstd-compressed
+#      (<table>.native.zst), into an emptyDir under <UTC timestamp>/.
+#   2. container `upload` (Google Cloud CLI): copies that directory to
+#      gs://dev-ai-1-openlit-backups/openlit/<timestamp>/, authenticated as the openlit-backup GSA
+#      through Workload Identity (KSA openlit/openlit-backup, bound in gke-deploy.sh).
+#
+# A logical, per-table dump rather than ClickHouse's native BACKUP: BACKUP ... TO S3() would need
+# a long-lived HMAC key for GCS's S3 API. Tables are dumped one by one, so a backup isn't a single
+# point-in-time snapshot - fine for telemetry. Restore: see README.md (OpenLIT -> Backups).
+# Run one now: kubectl -n openlit create job --from=cronjob/openlit-backup openlit-backup-manual
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openlit-backup
+  namespace: openlit
+  annotations:
+    iam.gke.io/gcp-service-account: openlit-backup@dev-ai-1.iam.gserviceaccount.com
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openlit-backup
+  namespace: openlit
+data:
+  dump.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    # Credentials go through a client config file, not argv (visible in /proc). It's removed on
+    # exit, so the upload container (same /work volume) never sees it.
+    trap 'rm -f /work/client.xml' EXIT
+    (umask 077; cat > /work/client.xml <<EOF
+    <clickhouse><user>${CH_USER}</user><password>${CH_PASSWORD}</password></clickhouse>
+    EOF
+    )
+    ch() { clickhouse-client --host=openlit-db --config-file=/work/client.xml "$@"; }
+
+    out="/backup/$(date -u +%Y%m%dT%H%M%SZ)"
+    mkdir -p "$out"
+    # Plain tables only: views have no data, and a materialized view's rows live in its target
+    # table (or its hidden `.inner` table, re-filled by the view after a restore).
+    tables=$(ch --query "SELECT name FROM system.tables
+                         WHERE database = '${CH_DATABASE}' AND NOT is_temporary
+                           AND engine NOT IN ('View', 'MaterializedView', 'LiveView', 'Dictionary')
+                           AND NOT startsWith(name, '.')
+                         ORDER BY name")
+    for t in $tables; do
+      ch --query "SHOW CREATE TABLE \`${CH_DATABASE}\`.\`${t}\` FORMAT TSVRaw" > "$out/${t}.sql"
+      ch --query "SELECT * FROM \`${CH_DATABASE}\`.\`${t}\` INTO OUTFILE '$out/${t}.native.zst' FORMAT Native"
+      rows=$(ch --query "SELECT count() FROM \`${CH_DATABASE}\`.\`${t}\`")
+      printf '%s\t%s\n' "$t" "$rows" | tee -a "$out/MANIFEST.tsv"
+    done
+    [ -s "$out/MANIFEST.tsv" ] || { echo "no tables found in database ${CH_DATABASE}" >&2; exit 1; }
+    du -sh "$out"
+  upload.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    # Workload Identity credentials can take a few seconds to appear in a new pod.
+    for i in 1 2 3 4 5 6; do
+      gcloud auth print-access-token >/dev/null 2>&1 && break
+      echo "waiting for Workload Identity credentials ($i)"; sleep 5
+    done
+    gcloud storage cp --recursive /backup/* "gs://${BUCKET}/openlit/"
+    echo "uploaded: $(ls /backup) -> gs://${BUCKET}/openlit/"
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: openlit-backup
+  namespace: openlit
+spec:
+  schedule: "0 3 * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600
+      ttlSecondsAfterFinished: 172800
+      template:
+        metadata:
+          labels:
+            app: openlit-backup
+        spec:
+          restartPolicy: Never
+          serviceAccountName: openlit-backup
+          # gcloud reaches Google through the GKE metadata server, which needs no KSA token.
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101
+            runAsGroup: 101
+            fsGroup: 101
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: dump
+              image: clickhouse/clickhouse-server:24.4.1
+              command: ["/bin/bash", "/scripts/dump.sh"]
+              env:
+                - name: CH_DATABASE
+                  value: openlit
+                - name: CH_USER
+                  valueFrom:
+                    secretKeyRef: {name: openlit-clickhouse, key: username}
+                - name: CH_PASSWORD
+                  valueFrom:
+                    secretKeyRef: {name: openlit-clickhouse, key: password}
+                - name: HOME
+                  value: /work
+                - name: TMPDIR
+                  value: /work
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi
+              volumeMounts:
+                - {name: scripts, mountPath: /scripts, readOnly: true}
+                - {name: backup, mountPath: /backup}
+                - {name: work, mountPath: /work}
+          containers:
+            - name: upload
+              image: gcr.io/google.com/cloudsdktool/google-cloud-cli:585.0.0-slim
+              command: ["/bin/bash", "/scripts/upload.sh"]
+              env:
+                - name: BUCKET
+                  value: dev-ai-1-openlit-backups
+                - name: CLOUDSDK_CONFIG
+                  value: /work/gcloud
+                - name: CLOUDSDK_CORE_DISABLE_USAGE_REPORTING
+                  value: "true"
+                - name: HOME
+                  value: /work
+                - name: TMPDIR
+                  value: /work
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: "1"
+                  memory: 512Mi
+              volumeMounts:
+                - {name: scripts, mountPath: /scripts, readOnly: true}
+                - {name: backup, mountPath: /backup, readOnly: true}
+                - {name: work, mountPath: /work}
+          volumes:
+            - name: scripts
+              configMap:
+                name: openlit-backup
+            - name: backup
+              emptyDir:
+                sizeLimit: 5Gi
+            - name: work
+              emptyDir:
+                sizeLimit: 256Mi

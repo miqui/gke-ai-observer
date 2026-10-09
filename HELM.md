@@ -16,11 +16,13 @@ exists to take it over.
 | Headlamp | `headlamp/headlamp` | 0.45.0 | `k8s/headlamp/headlamp-values.yaml` | `headlamp` |
 | Polaris | `fairwinds-stable/polaris` | 6.0.1 | `k8s/polaris/polaris-values.yaml` | `polaris` |
 | Trivy Operator | `aqua/trivy-operator` | 0.36.0 | `k8s/trivy-operator/trivy-operator-values.yaml` | `trivy-operator` |
+| OpenLIT (+ openlit-controller 0.10.0) | `openlit/openlit` | 1.24.0 | `k8s/openlit/values.yaml` | `openlit` |
 
 Repositories: `argo` https://argoproj.github.io/argo-helm, `external-secrets`
 https://charts.external-secrets.io, `crossplane-stable` https://charts.crossplane.io/stable,
 `kyverno` https://kyverno.github.io/kyverno/, `headlamp` https://kubernetes-sigs.github.io/headlamp/,
-`fairwinds-stable` https://charts.fairwinds.com/stable, `aqua` https://aquasecurity.github.io/helm-charts/.
+`fairwinds-stable` https://charts.fairwinds.com/stable, `aqua` https://aquasecurity.github.io/helm-charts/,
+`openlit` https://openlit.github.io/helm/.
 
 ## Changing values or versions
 

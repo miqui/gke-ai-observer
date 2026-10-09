@@ -1,16 +1,33 @@
-# Crossplane packages. Only the GCP provider family is installed: it owns the ProviderConfig CRDs
-# (so crossplane-provider-config.yaml has a kind to apply) but manages no GCP resources itself.
-# Each sub-provider (provider-gcp-storage, ...) is a separate pod with its own CRDs; add one here,
-# at the same version as the family, with `runtimeConfigRef: {name: provider-gcp}` when the
-# platform first needs it. Pinned to exact versions so a sync never upgrades anything by surprise.
+# Crossplane packages: the Upbound GCP provider family (built from crossplane-contrib/
+# provider-upjet-gcp) plus the sub-providers the platform uses. The family package owns the
+# ProviderConfig CRDs (crossplane-provider-config.yaml) and manages no resources itself; each
+# sub-provider is a separate pod with its own CRDs, at the same version as the family, running
+# as the crossplane-gcp GSA through `runtimeConfigRef: {name: provider-gcp}`.
+#
+#   provider-gcp-storage  GCS: the OpenLIT ClickHouse backup bucket + its IAM bindings
+#
+# Pinned to exact versions so a sync never upgrades anything by surprise. xpkg.upbound.io serves
+# the latest release of an Upbound official package anonymously; older releases stay pullable for
+# 12 months from their release date. Bump all three versions together.
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:
-  name: provider-family-gcp
+  name: upbound-provider-family-gcp
   annotations:
     argocd.argoproj.io/sync-wave: "0"
 spec:
-  package: xpkg.crossplane.io/crossplane-contrib/provider-family-gcp:v3.0.0
+  package: xpkg.upbound.io/upbound/provider-family-gcp:v3.1.0
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-gcp-storage
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  package: xpkg.upbound.io/upbound/provider-gcp-storage:v3.1.0
+  runtimeConfigRef:
+    name: provider-gcp
 ---
 apiVersion: pkg.crossplane.io/v1
 kind: Function

@@ -1,0 +1,69 @@
+# GCS bucket for the ClickHouse backups (backup-cronjob.yaml), and its IAM, as Crossplane managed
+# resources (Upbound provider-gcp-storage, namespaced `.m.` API). Credentials: the `default`
+# ClusterProviderConfig, i.e. the crossplane-gcp GSA via Workload Identity (roles/storage.admin,
+# granted in gke-deploy.sh).
+#
+# The bucket must outlive the cluster, so Crossplane may create and update it but never delete
+# it: managementPolicies leaves out `Delete`. When the cluster (or this manifest) goes away, the
+# bucket stays; a new cluster's Crossplane finds it by name and adopts it. gke-teardown.sh --purge
+# is the only thing that deletes it.
+#
+# The name is global across GCS and must match BACKUP_BUCKET in gke-teardown.sh.
+apiVersion: storage.gcp.m.upbound.io/v1beta1
+kind: Bucket
+metadata:
+  name: dev-ai-1-openlit-backups
+  namespace: openlit
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  managementPolicies: ["Observe", "Create", "Update", "LateInitialize"]
+  forProvider:
+    location: US-CENTRAL1
+    storageClass: STANDARD
+    uniformBucketLevelAccess: true
+    publicAccessPrevention: enforced
+    forceDestroy: false
+    labels:
+      app: openlit
+      managed-by: crossplane
+    # Keep two weeks of daily backups.
+    lifecycleRule:
+      - action:
+          type: Delete
+        condition:
+          age: 14
+    # A deleted/overwritten backup stays recoverable for 7 days (GCS default, stated explicitly).
+    softDeletePolicy:
+      retentionDurationSeconds: 604800
+---
+# The backup job's GSA may add backups and read them back - but not delete or overwrite one
+# (objectCreator has no delete, and overwriting needs delete). The GSA itself, and its Workload
+# Identity binding to openlit/openlit-backup, are created by gke-deploy.sh.
+apiVersion: storage.gcp.m.upbound.io/v1beta1
+kind: BucketIAMMember
+metadata:
+  name: openlit-backup-object-creator
+  namespace: openlit
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  forProvider:
+    bucketRef:
+      name: dev-ai-1-openlit-backups
+    role: roles/storage.objectCreator
+    member: serviceAccount:openlit-backup@dev-ai-1.iam.gserviceaccount.com
+---
+apiVersion: storage.gcp.m.upbound.io/v1beta1
+kind: BucketIAMMember
+metadata:
+  name: openlit-backup-object-viewer
+  namespace: openlit
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  forProvider:
+    bucketRef:
+      name: dev-ai-1-openlit-backups
+    role: roles/storage.objectViewer
+    member: serviceAccount:openlit-backup@dev-ai-1.iam.gserviceaccount.com

@@ -17,7 +17,7 @@ spec:
       matchExpressions:
         - key: kubernetes.io/metadata.name
           operator: In
-          values: ["default", "headlamp", "polaris"]
+          values: ["default", "headlamp", "polaris", "openlit"]
     resourceRules:
       - apiGroups: [""]
         apiVersions: ["v1"]

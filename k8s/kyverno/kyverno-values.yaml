@@ -23,7 +23,7 @@ config:
   # namespaces, so an unhealthy Kyverno can't block system, GitOps or platform changes. (The
   # kyverno namespace itself is excluded by the chart's excludeKyvernoNamespace default.) This
   # replaces the chart's default list, so kube-system is restated. Policies only match
-  # `default`, `headlamp` and `polaris` anyway; this limits the blast radius if that
+  # `default`, `headlamp`, `polaris` and `openlit` anyway; this limits the blast radius if that
   # ever widens or a policy is mis-scoped.
   webhooks:
     namespaceSelector:
